@@ -1,0 +1,131 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SignService.ViewModels"
+        x:Class="SignService.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="SignService — подписание документов ЭЦП"
+        Width="860" Height="600"
+        MinWidth="640" MinHeight="480"
+        WindowStartupLocation="CenterScreen"
+        DragDrop.AllowDrop="True">
+
+    <Grid Margin="16" RowDefinitions="Auto,Auto,*,Auto,Auto">
+
+        <!-- Выбор сертификата -->
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,8">
+            <TextBlock Grid.Column="0" Text="Сертификат:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <ComboBox Grid.Column="1"
+                      ItemsSource="{Binding Certificates}"
+                      SelectedItem="{Binding SelectedCertificate}"
+                      HorizontalAlignment="Stretch">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:CertificateItem">
+                        <TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis"/>
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+            <Button Grid.Column="2" Margin="8,0,0,0"
+                    Command="{Binding RefreshCertificatesCommand}"
+                    ToolTip.Tip="Обновить список сертификатов">
+                <TextBlock Text="⟳" FontSize="16"/>
+            </Button>
+        </Grid>
+
+        <!-- Параметры подписи -->
+        <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
+            <RadioButton GroupName="SigMode" Margin="0,0,16,4"
+                         IsChecked="{Binding IsDetached}"
+                         Content="Откреплённая подпись (.sig рядом с файлом)"
+                         ToolTip.Tip="Файл .sig содержит только подпись. Такой формат требуют госпорталы и большинство систем документооборота."/>
+            <RadioButton GroupName="SigMode" Margin="0,0,16,4"
+                         IsChecked="{Binding !IsDetached}"
+                         Content="Прикреплённая (документ внутри .sig)"/>
+            <CheckBox Margin="0,0,0,4"
+                      IsChecked="{Binding IncludeExpiredCertificates}"
+                      Content="Показывать просроченные сертификаты"/>
+        </WrapPanel>
+
+        <!-- Зона перетаскивания / список файлов -->
+        <Border Grid.Row="2"
+                Name="DropZone"
+                BorderThickness="2"
+                BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+                CornerRadius="8"
+                Background="Transparent">
+            <Border.Styles>
+                <Style Selector="Border#DropZone.dragover">
+                    <Setter Property="BorderBrush" Value="{DynamicResource SystemAccentColor}"/>
+                    <Setter Property="Background" Value="#22808080"/>
+                </Style>
+            </Border.Styles>
+
+            <Panel>
+                <!-- Подсказка, когда файлов нет -->
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
+                            IsVisible="{Binding !Files.Count}">
+                    <TextBlock Text="📄" FontSize="48" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Перетащите файлы сюда"
+                               FontSize="18" HorizontalAlignment="Center"
+                               Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
+                    <TextBlock Text="или воспользуйтесь кнопкой «Обзор…»"
+                               HorizontalAlignment="Center"
+                               Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
+                </StackPanel>
+
+                <!-- Очередь файлов -->
+                <ScrollViewer IsVisible="{Binding Files.Count}">
+                    <ItemsControl ItemsSource="{Binding Files}" Margin="8">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:SignFileItem">
+                                <Border Margin="0,2" Padding="10,6" CornerRadius="6"
+                                        Background="{DynamicResource SystemControlBackgroundListLowBrush}">
+                                    <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+                                        <StackPanel Grid.Column="0" Spacing="2">
+                                            <TextBlock Text="{Binding FileName}" FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Text="{Binding FilePath}" FontSize="11"
+                                                       Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1" Text="{Binding SizeDisplay}"
+                                                   VerticalAlignment="Center" Margin="8,0"
+                                                   Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
+                                        <TextBlock Grid.Column="2" Text="{Binding StatusDisplay}"
+                                                   VerticalAlignment="Center" Margin="8,0"
+                                                   TextTrimming="CharacterEllipsis" MaxWidth="320"
+                                                   ToolTip.Tip="{Binding StatusDisplay}"/>
+                                        <Button Grid.Column="3" Margin="8,0,0,0" Padding="6,2"
+                                                Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).RemoveFileCommand}"
+                                                CommandParameter="{Binding}"
+                                                ToolTip.Tip="Убрать из списка">
+                                            <TextBlock Text="✕"/>
+                                        </Button>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Panel>
+        </Border>
+
+        <!-- Кнопки -->
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
+            <Button Content="Обзор…" Command="{Binding BrowseCommand}"/>
+            <Button Content="Очистить список" Command="{Binding ClearCommand}"/>
+            <Button Content="Подписать"
+                    Command="{Binding SignAllCommand}"
+                    Classes="accent"
+                    HorizontalAlignment="Right"
+                    FontWeight="SemiBold"
+                    Padding="24,6"/>
+            <ProgressBar IsIndeterminate="True" Width="120"
+                         IsVisible="{Binding IsBusy}" VerticalAlignment="Center"/>
+        </StackPanel>
+
+        <!-- Статусная строка -->
+        <TextBlock Grid.Row="4" Text="{Binding StatusText}" Margin="0,10,0,0"
+                   Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                   TextTrimming="CharacterEllipsis"/>
+    </Grid>
+</Window>
