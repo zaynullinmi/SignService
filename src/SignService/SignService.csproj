@@ -11,9 +11,9 @@
     <AssemblyTitle>SignService — подписание документов ЭЦП</AssemblyTitle>
     <Product>SignService</Product>
     <Version>1.0.0</Version>
-    <Authors>zaynullinmi</Authors>
-    <Company>zaynullinmi</Company>
-    <Copyright>© 2026 zaynullinmi &lt;zaynullinmi@gmail.com&gt;</Copyright>
+    <Authors>Зайнуллин Марат Илгамович</Authors>
+    <Company>Зайнуллин Марат Илгамович</Company>
+    <Copyright>© 2026 Зайнуллин Марат Илгамович, +7-963-694-2461, zaynullinmi@gmail.com</Copyright>
     <RepositoryUrl>https://github.com/zaynullinmi/SignService</RepositoryUrl>
   </PropertyGroup>
 

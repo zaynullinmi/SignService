@@ -129,7 +129,7 @@
                        Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
                        TextTrimming="CharacterEllipsis"/>
             <TextBlock Grid.Column="1" Margin="16,0,0,0"
-                       Text="Автор: zaynullinmi — zaynullinmi@gmail.com"
+                       Text="Автор: Зайнуллин Марат Илгамович — +7-963-694-2461, zaynullinmi@gmail.com"
                        ToolTip.Tip="https://github.com/zaynullinmi"
                        Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
         </Grid>

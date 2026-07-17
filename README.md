@@ -1,9 +1,18 @@
 # SignService — подписание документов ЭЦП
 
 Отдельное настольное приложение на C# / [Avalonia UI](https://avaloniaui.net/) для подписания
-документов электронной подписью (ЭЦП). Логика подписания повторяет сервис подписания
-документов из ReportGGE: сертификаты берутся из хранилища пользователя, подпись
-формируется в формате CMS/PKCS#7 (CAdES-BES).
+документов электронной подписью (ЭЦП). Логика подписания портирована из сервиса
+подписания документов ReportGGE:
+
+- на Windows подпись создаётся **нативным CryptoAPI (`CryptSignMessage`)** — .NET
+  `SignedCms` не умеет ГОСТ, а CryptoAPI отдаёт операцию криптопровайдеру сертификата
+  (для ГОСТ — **КриптоПро CSP**);
+- OID алгоритма хеширования выбирается по типу ключа: ГОСТ Р 34.10-2012 (256/512) →
+  ГОСТ Р 34.11-2012, ГОСТ Р 34.10-2001 → ГОСТ Р 34.11-94, иначе SHA-256;
+- в подпись вкладывается **вся цепочка сертификатов** (лист + УЦ + корень) — чтобы
+  подпись проверялась офлайн; цепочка кешируется по отпечатку для пакетного подписания;
+- выбранный сертификат **запоминается по отпечатку** — следующий запуск подписывает
+  им же без повторного выбора.
 
 ## Возможности
 
@@ -56,8 +65,9 @@ dotnet publish src/SignService -c Release -r win-x64 --self-contained true \
 
 ## Автор
 
-**zaynullinmi**
+**Зайнуллин Марат Илгамович**
 
+- Телефон: +7-963-694-2461
 - E-mail: <zaynullinmi@gmail.com>
 - GitHub: <https://github.com/zaynullinmi>
 
@@ -67,7 +77,9 @@ dotnet publish src/SignService -c Release -r win-x64 --self-contained true \
 src/SignService/
 ├── Services/
 │   ├── CertificateProvider.cs   # доступ к сертификатам (X509Store)
-│   └── DocumentSigner.cs        # подпись CMS/PKCS#7 (SignedCms) + проверка
+│   ├── DocumentSigner.cs        # подпись CMS/PKCS#7: ГОСТ-OID, цепочка, кеш
+│   ├── NativeSign.cs            # CryptSignMessage (CryptoAPI) — ГОСТ через КриптоПро
+│   └── AppSettings.cs           # запоминание сертификата и режима подписи
 ├── ViewModels/
 │   ├── MainWindowViewModel.cs   # очередь файлов, команды подписания
 │   ├── CertificateItem.cs

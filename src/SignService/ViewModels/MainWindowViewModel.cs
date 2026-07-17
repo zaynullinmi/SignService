@@ -12,11 +12,18 @@ public partial class MainWindowViewModel : ObservableObject
 {
     private readonly CertificateProvider _certificateProvider;
     private readonly DocumentSigner _documentSigner;
+    private readonly AppSettings _settings;
+    private bool _initializing;
 
     public MainWindowViewModel(CertificateProvider certificateProvider, DocumentSigner documentSigner)
     {
         _certificateProvider = certificateProvider;
         _documentSigner = documentSigner;
+        _settings = AppSettings.Load();
+
+        _initializing = true;
+        IsDetached = _settings.DetachedSignature;
+        _initializing = false;
 
         Files.CollectionChanged += (_, _) => SignAllCommand.NotifyCanExecuteChanged();
         RefreshCertificates();
@@ -54,10 +61,29 @@ public partial class MainWindowViewModel : ObservableObject
 
     partial void OnIncludeExpiredCertificatesChanged(bool value) => RefreshCertificates();
 
+    // Как в ReportGGE: выбор запоминается, следующий запуск подписывает тем же
+    // сертификатом без повторного выбора.
+    partial void OnSelectedCertificateChanged(CertificateItem? value)
+    {
+        if (_initializing || value is null)
+            return;
+        _settings.SignCertThumbprint = value.Thumbprint;
+        _settings.Save();
+    }
+
+    partial void OnIsDetachedChanged(bool value)
+    {
+        if (_initializing)
+            return;
+        _settings.DetachedSignature = value;
+        _settings.Save();
+    }
+
     [RelayCommand]
     private void RefreshCertificates()
     {
-        var previous = SelectedCertificate?.Thumbprint;
+        // Предпочитаем текущий выбор, затем сохранённый в настройках отпечаток.
+        var previous = SelectedCertificate?.Thumbprint ?? _settings.SignCertThumbprint;
         Certificates.Clear();
 
         try
