@@ -11,6 +11,10 @@
     <AssemblyTitle>SignService — подписание документов ЭЦП</AssemblyTitle>
     <Product>SignService</Product>
     <Version>1.0.0</Version>
+    <Authors>zaynullinmi</Authors>
+    <Company>zaynullinmi</Company>
+    <Copyright>© 2026 zaynullinmi &lt;zaynullinmi@gmail.com&gt;</Copyright>
+    <RepositoryUrl>https://github.com/zaynullinmi/SignService</RepositoryUrl>
   </PropertyGroup>
 
   <ItemGroup>

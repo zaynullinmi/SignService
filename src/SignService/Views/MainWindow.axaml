@@ -124,8 +124,14 @@
         </StackPanel>
 
         <!-- Статусная строка -->
-        <TextBlock Grid.Row="4" Text="{Binding StatusText}" Margin="0,10,0,0"
-                   Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
-                   TextTrimming="CharacterEllipsis"/>
+        <Grid Grid.Row="4" ColumnDefinitions="*,Auto" Margin="0,10,0,0">
+            <TextBlock Grid.Column="0" Text="{Binding StatusText}"
+                       Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                       TextTrimming="CharacterEllipsis"/>
+            <TextBlock Grid.Column="1" Margin="16,0,0,0"
+                       Text="Автор: zaynullinmi — zaynullinmi@gmail.com"
+                       ToolTip.Tip="https://github.com/zaynullinmi"
+                       Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
+        </Grid>
     </Grid>
 </Window>

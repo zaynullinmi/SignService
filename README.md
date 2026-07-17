@@ -54,6 +54,13 @@ dotnet publish src/SignService -c Release -r win-x64 --self-contained true \
 4. Нажмите **«Подписать»** — рядом с каждым файлом появится `имя_файла.sig`,
    статус отобразится в списке.
 
+## Автор
+
+**zaynullinmi**
+
+- E-mail: <zaynullinmi@gmail.com>
+- GitHub: <https://github.com/zaynullinmi>
+
 ## Структура проекта
 
 ```

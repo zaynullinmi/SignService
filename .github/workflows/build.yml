@@ -1,0 +1,40 @@
+name: Build
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Windows x64 exe
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish self-contained single-file exe
+        run: >
+          dotnet publish src/SignService -c Release -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          -o publish
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SignService-win-x64
+          path: publish/SignService.exe
+          if-no-files-found: error
+
+      # На тег v* дополнительно публикуем exe в GitHub Release
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: publish/SignService.exe
