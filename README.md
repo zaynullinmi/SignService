@@ -34,10 +34,15 @@ dotnet build SignService.sln -c Release
 dotnet run --project src/SignService
 ```
 
-Публикация самодостаточного exe для Windows:
+Публикация самодостаточного однофайлового exe для Windows (не требует
+установленного .NET на машине пользователя):
 
 ```bash
-dotnet publish src/SignService -c Release -r win-x64 --self-contained -o publish
+dotnet publish src/SignService -c Release -r win-x64 --self-contained true \
+  -p:PublishSingleFile=true \
+  -p:IncludeNativeLibrariesForSelfExtract=true \
+  -p:EnableCompressionInSingleFile=true \
+  -o publish
 ```
 
 ## Как пользоваться
