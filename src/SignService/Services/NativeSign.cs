@@ -54,6 +54,21 @@ internal static class NativeSign
         public uint dwInnerContentType;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CryptAttrBlob
+    {
+        public uint cbData;
+        public IntPtr pbData;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CryptAttributeNative
+    {
+        public IntPtr pszObjId;   // LPSTR
+        public uint cValue;
+        public IntPtr rgValue;    // CRYPT_ATTR_BLOB*
+    }
+
     [DllImport("crypt32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CryptSignMessage(
@@ -65,9 +80,14 @@ internal static class NativeSign
         byte[]? pbSignedBlob,
         ref uint pcbSignedBlob);
 
+    /// <summary>Подписанный (authenticated) атрибут: OID и DER-байты значения.</summary>
+    public readonly record struct AuthAttribute(string Oid, byte[] DerValue);
+
     /// <summary>
     /// Подписывает данные сертификатом, вкладывая в подпись переданные сертификаты
-    /// (лист + цепочка УЦ — для офлайн-проверки, как это делает портал).
+    /// (лист + цепочка УЦ — для офлайн-проверки, как это делает портал) и подписанные
+    /// атрибуты (CAdES-BES). При наличии атрибутов CryptoAPI сам добавляет обязательные
+    /// content-type и message-digest.
     /// </summary>
     /// <param name="hashOid">OID алгоритма хеширования, соответствующий ключу сертификата.</param>
     /// <param name="detached">true — откреплённая подпись; false — документ внутри.</param>
@@ -76,7 +96,8 @@ internal static class NativeSign
         X509Certificate2 signerCert,
         IReadOnlyList<X509Certificate2> embedCerts,
         string hashOid,
-        bool detached)
+        bool detached,
+        IReadOnlyList<AuthAttribute>? authAttrs = null)
     {
         var dataHandle = GCHandle.Alloc(data, GCHandleType.Pinned);
         // Массив PCCERT_CONTEXT вкладываемых сертификатов; сами объекты X509Certificate2
@@ -85,6 +106,7 @@ internal static class NativeSign
         for (var i = 0; i < embedCerts.Count; i++)
             certPtrs[i] = embedCerts[i].Handle;
         var certArrayHandle = GCHandle.Alloc(certPtrs, GCHandleType.Pinned);
+        var unmanaged = new List<IntPtr>();
 
         try
         {
@@ -97,6 +119,12 @@ internal static class NativeSign
                 cMsgCert = (uint)certPtrs.Length,
                 rgpMsgCert = certPtrs.Length > 0 ? certArrayHandle.AddrOfPinnedObject() : IntPtr.Zero,
             };
+
+            if (authAttrs is { Count: > 0 })
+            {
+                para.cAuthAttr = (uint)authAttrs.Count;
+                para.rgAuthAttr = MarshalAttributes(authAttrs, unmanaged);
+            }
 
             var toSign = new[] { dataHandle.AddrOfPinnedObject() };
             var lengths = new[] { (uint)data.Length };
@@ -117,9 +145,47 @@ internal static class NativeSign
         {
             dataHandle.Free();
             certArrayHandle.Free();
+            foreach (var ptr in unmanaged)
+                Marshal.FreeHGlobal(ptr);
             GC.KeepAlive(signerCert);
             GC.KeepAlive(embedCerts);
         }
+    }
+
+    // Собирает в неуправляемой памяти массив CRYPT_ATTRIBUTE (по одному значению на
+    // атрибут); все выделенные блоки регистрируются в unmanaged для освобождения.
+    private static IntPtr MarshalAttributes(IReadOnlyList<AuthAttribute> attrs, List<IntPtr> unmanaged)
+    {
+        var attrSize = Marshal.SizeOf<CryptAttributeNative>();
+        var attrArray = Alloc(attrSize * attrs.Count, unmanaged);
+
+        for (var i = 0; i < attrs.Count; i++)
+        {
+            var (oid, der) = attrs[i];
+
+            var oidPtr = Marshal.StringToHGlobalAnsi(oid);
+            unmanaged.Add(oidPtr);
+
+            var dataPtr = Alloc(der.Length, unmanaged);
+            Marshal.Copy(der, 0, dataPtr, der.Length);
+
+            var blobPtr = Alloc(Marshal.SizeOf<CryptAttrBlob>(), unmanaged);
+            Marshal.StructureToPtr(new CryptAttrBlob { cbData = (uint)der.Length, pbData = dataPtr }, blobPtr, false);
+
+            Marshal.StructureToPtr(
+                new CryptAttributeNative { pszObjId = oidPtr, cValue = 1, rgValue = blobPtr },
+                attrArray + i * attrSize,
+                false);
+        }
+
+        return attrArray;
+    }
+
+    private static IntPtr Alloc(int size, List<IntPtr> unmanaged)
+    {
+        var ptr = Marshal.AllocHGlobal(size);
+        unmanaged.Add(ptr);
+        return ptr;
     }
 
     private static Exception NewSignError()

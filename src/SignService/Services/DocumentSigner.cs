@@ -81,12 +81,25 @@ public class DocumentSigner
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static byte[] SignNative(byte[] data, X509Certificate2 certificate, bool detached)
     {
+        // Усиленный формат (CAdES-BES): подписанные атрибуты — время подписания
+        // и signing-certificate-v2 (защита от подмены сертификата). content-type
+        // и message-digest CryptoAPI добавит сам.
+        var attrs = new[]
+        {
+            new NativeSign.AuthAttribute(
+                CadesAttributes.SigningTimeOid,
+                CadesAttributes.BuildSigningTime(DateTimeOffset.UtcNow)),
+            new NativeSign.AuthAttribute(
+                CadesAttributes.SigningCertificateV2Oid,
+                CadesAttributes.BuildSigningCertificateV2(certificate)),
+        };
+
         // Вкладываем в подпись всю цепочку (лист + УЦ + корень), как это делает
         // портал в ReportGGE — чтобы подпись проверялась офлайн.
         var embed = BuildChain(certificate);
         try
         {
-            return NativeSign.Sign(data, certificate, embed, HashOidFor(certificate), detached);
+            return NativeSign.Sign(data, certificate, embed, HashOidFor(certificate), detached, attrs);
         }
         finally
         {
@@ -108,7 +121,11 @@ public class DocumentSigner
         {
             IncludeOption = X509IncludeOption.ExcludeRoot,
         };
+        // Те же атрибуты CAdES-BES, что и в нативном пути.
         signer.SignedAttributes.Add(new Pkcs9SigningTime(DateTime.Now));
+        signer.SignedAttributes.Add(new Pkcs9AttributeObject(
+            CadesAttributes.SigningCertificateV2Oid,
+            CadesAttributes.BuildSigningCertificateV2(certificate)));
         signedCms.ComputeSignature(signer, silent: false);
         return signedCms.Encode();
     }
