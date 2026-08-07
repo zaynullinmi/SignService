@@ -88,11 +88,13 @@ public partial class SignFileItem : ObservableObject
         SignStatus.Pending => "Ожидает",
         SignStatus.Signing => "Подписывается…",
         SignStatus.Signed when SignerCount > 1 =>
-            $"Подписан (подписантов: {SignerCount}) → {Path.GetFileName(SignaturePath)}",
-        SignStatus.Signed => $"Подписан → {Path.GetFileName(SignaturePath)}",
+            $"Подписан (подписантов: {SignerCount}) → {Path.GetFileName(SignaturePath)}{SignedNote}",
+        SignStatus.Signed => $"Подписан → {Path.GetFileName(SignaturePath)}{SignedNote}",
         SignStatus.Failed => $"Ошибка: {Message}",
         _ => string.Empty,
     };
+
+    private string SignedNote => string.IsNullOrEmpty(Message) ? string.Empty : $" ⚠ {Message}";
 
     private static string FormatSize(long bytes) => bytes switch
     {

@@ -218,6 +218,15 @@ public partial class MainWindowViewModel : ObservableObject
                             MergeWithExisting, file.ExtraSignatures));
                     file.SignaturePath = result.SignaturePath;
                     file.SignerCount = result.SignerCount;
+
+                    var notes = new List<string>();
+                    if (result.ExcludedSigners.Count > 0)
+                        notes.Add("исключены не соответствующие документу подписи: "
+                                  + string.Join("; ", result.ExcludedSigners));
+                    if (result.UnverifiedSigners.Count > 0)
+                        notes.Add("не удалось проверить: " + string.Join("; ", result.UnverifiedSigners));
+                    file.Message = notes.Count > 0 ? string.Join(". ", notes) : null;
+
                     file.Status = SignStatus.Signed;
                     signed++;
                 }

@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Formats.Asn1;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -30,16 +32,83 @@ internal static class CmsMerger
         public readonly List<(string SidKey, byte[] Der)> Signers = new();
     }
 
+    /// <summary>Результат объединения с проверкой по документу.</summary>
+    public sealed record MergeResult(
+        byte[] Signature,
+        int SignerCount,
+        IReadOnlyList<string> ExcludedSigners,
+        IReadOnlyList<string> UnverifiedSigners);
+
     /// <summary>
-    /// Объединяет подписи в одну. Входные .sig могут быть в DER/BER или base64/PEM.
-    /// Порядок важен: при совпадении подписанта побеждает более поздняя подпись.
+    /// Объединяет подписи с проверкой соответствия каждой из них документу:
+    /// у подписанта из подписанных атрибутов берётся messageDigest и сравнивается
+    /// с хешем документа (ГОСТ Р 34.11-2012 — своей реализацией Стрибога, SHA-1/256/384/512 —
+    /// штатно). Подписи, сделанные под другим файлом или прежней версией документа,
+    /// ИСКЛЮЧАЮТСЯ из результата (их список — в ExcludedSigners). Подписи, чей алгоритм
+    /// хеша проверить нечем, сохраняются и перечисляются в UnverifiedSigners.
+    /// </summary>
+    public static MergeResult MergeForDocument(IReadOnlyList<byte[]> signatures, byte[] document)
+    {
+        if (signatures.Count == 0)
+            throw new ArgumentException("Нет подписей для объединения.", nameof(signatures));
+
+        var parsed = signatures.Select(s => Parse(Normalize(s))).ToList();
+
+        // Справочник сертификатов всех входов — для имени подписанта в отчёте.
+        var certIndex = BuildCertIndex(parsed);
+        var hashCache = new Dictionary<string, byte[]?>();
+        var excluded = new List<string>();
+        var unverified = new List<string>();
+
+        foreach (var p in parsed)
+        {
+            for (var i = p.Signers.Count - 1; i >= 0; i--)
+            {
+                var (_, der) = p.Signers[i];
+                var check = CheckSignerAgainstDocument(der, document, hashCache);
+                if (check == SignerDocMatch.Match)
+                    continue;
+
+                var name = SignerDisplayName(der, certIndex);
+                if (check == SignerDocMatch.Mismatch)
+                {
+                    excluded.Add(name);
+                    p.Signers.RemoveAt(i);
+                }
+                else
+                {
+                    unverified.Add(name);
+                }
+            }
+        }
+
+        if (parsed.All(p => p.Signers.Count == 0))
+            throw new InvalidOperationException(
+                "Все объединяемые подписи не соответствуют текущему содержимому документа.");
+
+        var merged = BuildMerged(parsed);
+        return new MergeResult(
+            merged,
+            CountSigners(merged),
+            excluded.Distinct().ToList(),
+            unverified.Distinct().ToList());
+    }
+
+    /// <summary>
+    /// Объединяет подписи в одну без проверки по документу. Входные .sig могут быть
+    /// в DER/BER или base64/PEM. Порядок важен: при совпадении подписанта побеждает
+    /// более поздняя подпись.
     /// </summary>
     public static byte[] Merge(IReadOnlyList<byte[]> signatures)
     {
         if (signatures.Count == 0)
             throw new ArgumentException("Нет подписей для объединения.", nameof(signatures));
 
-        var parsed = signatures.Select(s => Parse(Normalize(s))).ToList();
+        return BuildMerged(signatures.Select(s => Parse(Normalize(s))).ToList());
+    }
+
+    private static byte[] BuildMerged(List<ParsedSignedData> parsed)
+    {
 
         var version = parsed.Max(p => p.Version);
         var digestAlgorithms = DedupeBytes(parsed.SelectMany(p => p.DigestAlgorithms));
@@ -166,6 +235,128 @@ internal static class CmsMerger
             throw new InvalidOperationException(
                 "Не удалось разобрать подпись: файл не является корректной CMS/PKCS#7 подписью. " + e.Message, e);
         }
+    }
+
+    private enum SignerDocMatch
+    {
+        Match,
+        Mismatch,
+        Unknown,
+    }
+
+    // Сверяет подпись с документом по messageDigest из подписанных атрибутов.
+    // Без атрибутов (голый PKCS#7) или с неподдерживаемым алгоритмом хеша — Unknown.
+    private static SignerDocMatch CheckSignerAgainstDocument(
+        byte[] signerInfoDer, byte[] document, Dictionary<string, byte[]?> hashCache)
+    {
+        try
+        {
+            var (digestOid, messageDigest) = InspectSigner(signerInfoDer);
+            if (messageDigest is null)
+                return SignerDocMatch.Unknown;
+
+            if (!hashCache.TryGetValue(digestOid, out var docHash))
+            {
+                docHash = HashDocument(digestOid, document);
+                hashCache[digestOid] = docHash;
+            }
+
+            if (docHash is null)
+                return SignerDocMatch.Unknown;
+
+            return docHash.AsSpan().SequenceEqual(messageDigest)
+                ? SignerDocMatch.Match
+                : SignerDocMatch.Mismatch;
+        }
+        catch (AsnContentException)
+        {
+            return SignerDocMatch.Unknown;
+        }
+    }
+
+    // (OID алгоритма хеша, значение messageDigest из подписанных атрибутов или null).
+    private static (string DigestOid, byte[]? MessageDigest) InspectSigner(byte[] signerInfoDer)
+    {
+        var signerInfo = new AsnReader(signerInfoDer, AsnEncodingRules.BER).ReadSequence();
+        signerInfo.ReadInteger();                                    // version
+        signerInfo.ReadEncodedValue();                               // sid
+        var digestAlgorithm = signerInfo.ReadSequence();             // AlgorithmIdentifier
+        var digestOid = digestAlgorithm.ReadObjectIdentifier();
+
+        var signedAttrsTag = new Asn1Tag(TagClass.ContextSpecific, 0, isConstructed: true);
+        if (!signerInfo.HasData || signerInfo.PeekTag() != signedAttrsTag)
+            return (digestOid, null);
+
+        var attrs = signerInfo.ReadSetOf(signedAttrsTag);
+        while (attrs.HasData)
+        {
+            var attr = attrs.ReadSequence();
+            if (attr.ReadObjectIdentifier() == "1.2.840.113549.1.9.4") // messageDigest
+            {
+                var values = attr.ReadSetOf();
+                return (digestOid, values.ReadOctetString());
+            }
+        }
+
+        return (digestOid, null);
+    }
+
+    private static byte[]? HashDocument(string digestOid, byte[] document) => digestOid switch
+    {
+        "1.2.643.7.1.1.2.2" => Streebog.Hash256(document),   // ГОСТ Р 34.11-2012 (256)
+        "1.2.643.7.1.1.2.3" => Streebog.Hash512(document),   // ГОСТ Р 34.11-2012 (512)
+        "2.16.840.1.101.3.4.2.1" => SHA256.HashData(document),
+        "2.16.840.1.101.3.4.2.2" => SHA384.HashData(document),
+        "2.16.840.1.101.3.4.2.3" => SHA512.HashData(document),
+        "1.3.14.3.2.26" => SHA1.HashData(document),
+        _ => null,                                            // ГОСТ 34.11-94 и прочее — не проверяем
+    };
+
+    // «Кому выдан» (CN) сертификата подписанта по его SignerIdentifier, либо номер-заглушка.
+    private static string SignerDisplayName(
+        byte[] signerInfoDer, IReadOnlyDictionary<string, string> certIndex)
+    {
+        try
+        {
+            var sidKey = SidKeyOf(signerInfoDer);
+            if (certIndex.TryGetValue(sidKey, out var cn))
+                return cn;
+        }
+        catch (AsnContentException)
+        {
+        }
+
+        return "неизвестный подписант";
+    }
+
+    // Индекс «SignerIdentifier (issuer+serial) → CN» по всем вложенным сертификатам.
+    private static IReadOnlyDictionary<string, string> BuildCertIndex(List<ParsedSignedData> parsed)
+    {
+        var index = new Dictionary<string, string>();
+        foreach (var blob in parsed.SelectMany(p => p.Certificates))
+        {
+            try
+            {
+                using var cert = new X509Certificate2(blob);
+                // Восстанавливаем DER SignerIdentifier: SEQUENCE { issuer Name, serialNumber INTEGER }.
+                var writer = new AsnWriter(AsnEncodingRules.DER);
+                using (writer.PushSequence())
+                {
+                    writer.WriteEncodedValue(cert.IssuerName.RawData);
+                    writer.WriteInteger(cert.SerialNumberBytes.Span);
+                }
+
+                var key = Convert.ToHexString(writer.Encode());
+                var cn = cert.GetNameInfo(X509NameType.SimpleName, forIssuer: false);
+                index[key] = string.IsNullOrWhiteSpace(cn) ? cert.Subject : cn;
+            }
+            catch (Exception e) when (e is System.Security.Cryptography.CryptographicException or AsnContentException)
+            {
+                // непригодный сертификат в контейнере — имя останется заглушкой
+            }
+        }
+
+        return index;
     }
 
     // Ключ подписанта — DER-байты SignerIdentifier (IssuerAndSerialNumber либо

@@ -19,8 +19,16 @@ namespace SignService.Services;
 /// </summary>
 public class DocumentSigner
 {
-    /// <summary>Результат подписания файла: путь к .sig и число подписантов в нём.</summary>
-    public readonly record struct SignFileResult(string SignaturePath, int SignerCount);
+    /// <summary>
+    /// Результат подписания файла: путь к .sig, число подписантов в нём,
+    /// исключённые при объединении подписи (не соответствуют документу) и подписи,
+    /// которые проверить было нечем (сохранены как есть).
+    /// </summary>
+    public readonly record struct SignFileResult(
+        string SignaturePath,
+        int SignerCount,
+        IReadOnlyList<string> ExcludedSigners,
+        IReadOnlyList<string> UnverifiedSigners);
 
     /// <summary>
     /// Подписывает файл и сохраняет подпись рядом с ним в файле "&lt;имя&gt;.sig".
@@ -58,10 +66,18 @@ public class DocumentSigner
             inputs.Add(await File.ReadAllBytesAsync(path, cancellationToken));
         inputs.Add(own); // своя — последней: при совпадении подписанта она побеждает
 
-        var result = inputs.Count == 1 ? own : CmsMerger.Merge(inputs);
+        if (inputs.Count == 1)
+        {
+            await File.WriteAllBytesAsync(signaturePath, own, cancellationToken);
+            return new SignFileResult(signaturePath, 1, Array.Empty<string>(), Array.Empty<string>());
+        }
 
-        await File.WriteAllBytesAsync(signaturePath, result, cancellationToken);
-        return new SignFileResult(signaturePath, inputs.Count == 1 ? 1 : CmsMerger.CountSigners(result));
+        // Объединение с проверкой: подписи под другим файлом или прежней версией
+        // документа исключаются — иначе портал отклонит весь контейнер.
+        var merged = CmsMerger.MergeForDocument(inputs, data);
+        await File.WriteAllBytesAsync(signaturePath, merged.Signature, cancellationToken);
+        return new SignFileResult(
+            signaturePath, merged.SignerCount, merged.ExcludedSigners, merged.UnverifiedSigners);
     }
 
     /// <summary>
