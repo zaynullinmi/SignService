@@ -22,7 +22,10 @@ public partial class MainWindow : Window
         DataContextChanged += (_, _) =>
         {
             if (DataContext is MainWindowViewModel vm)
+            {
                 vm.BrowseRequested += async (_, _) => await BrowseFilesAsync(vm);
+                vm.AttachSignaturesRequested += async (_, item) => await BrowseSignaturesAsync(item);
+            }
         };
     }
 
@@ -91,5 +94,28 @@ public partial class MainWindow : Window
             .Where(p => p is not null)
             .Select(p => p!)
             .ToArray());
+    }
+
+    private async System.Threading.Tasks.Task BrowseSignaturesAsync(SignFileItem item)
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = $"Подписи других лиц для объединения — {item.FileName}",
+            AllowMultiple = true,
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("Подписи CMS (*.sig, *.p7s)") { Patterns = new[] { "*.sig", "*.p7s" } },
+                FilePickerFileTypes.All,
+            },
+        });
+
+        var added = item.AttachSignatures(files
+            .Select(f => f.TryGetLocalPath())
+            .Where(p => p is not null)
+            .Select(p => p!)
+            .ToList());
+
+        if (added > 0 && DataContext is MainWindowViewModel vm)
+            vm.StatusText = $"Приложено подписей к «{item.FileName}»: {added} (всего: {item.ExtraCount})";
     }
 }

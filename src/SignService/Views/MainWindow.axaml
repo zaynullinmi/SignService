@@ -40,6 +40,10 @@
             <RadioButton GroupName="SigMode" Margin="0,0,16,4"
                          IsChecked="{Binding !IsDetached}"
                          Content="Прикреплённая (документ внутри .sig)"/>
+            <CheckBox Margin="0,0,16,4"
+                      IsChecked="{Binding MergeWithExisting}"
+                      Content="Объединять с существующей .sig"
+                      ToolTip.Tip="Соподписание: если рядом с документом уже есть .sig, ваша подпись добавится к имеющимся подписантам, а не заменит их. Подписи других лиц можно также приложить кнопкой «＋.sig» у файла."/>
             <CheckBox Margin="0,0,0,4"
                       IsChecked="{Binding IncludeExpiredCertificates}"
                       Content="Показывать просроченные сертификаты"/>
@@ -79,7 +83,7 @@
                             <DataTemplate x:DataType="vm:SignFileItem">
                                 <Border Margin="0,2" Padding="10,6" CornerRadius="6"
                                         Background="{DynamicResource SystemControlBackgroundListLowBrush}">
-                                    <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+                                    <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
                                         <StackPanel Grid.Column="0" Spacing="2">
                                             <TextBlock Text="{Binding FileName}" FontWeight="SemiBold"
                                                        TextTrimming="CharacterEllipsis"/>
@@ -87,14 +91,25 @@
                                                        Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
                                                        TextTrimming="CharacterEllipsis"/>
                                         </StackPanel>
-                                        <TextBlock Grid.Column="1" Text="{Binding SizeDisplay}"
+                                        <TextBlock Grid.Column="1" Text="{Binding ExtraDisplay}"
+                                                   IsVisible="{Binding HasExtra}"
+                                                   VerticalAlignment="Center" Margin="8,0"
+                                                   Foreground="{DynamicResource SystemAccentColor}"
+                                                   ToolTip.Tip="Приложенные подписи других лиц будут объединены с вашей в один .sig"/>
+                                        <TextBlock Grid.Column="2" Text="{Binding SizeDisplay}"
                                                    VerticalAlignment="Center" Margin="8,0"
                                                    Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
-                                        <TextBlock Grid.Column="2" Text="{Binding StatusDisplay}"
+                                        <TextBlock Grid.Column="3" Text="{Binding StatusDisplay}"
                                                    VerticalAlignment="Center" Margin="8,0"
                                                    TextTrimming="CharacterEllipsis" MaxWidth="320"
                                                    ToolTip.Tip="{Binding StatusDisplay}"/>
-                                        <Button Grid.Column="3" Margin="8,0,0,0" Padding="6,2"
+                                        <Button Grid.Column="4" Margin="8,0,0,0" Padding="6,2"
+                                                Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).AttachSignaturesCommand}"
+                                                CommandParameter="{Binding}"
+                                                ToolTip.Tip="Приложить подписи других лиц (.sig) — они будут объединены с вашей в один файл">
+                                            <TextBlock Text="＋.sig"/>
+                                        </Button>
+                                        <Button Grid.Column="5" Margin="4,0,0,0" Padding="6,2"
                                                 Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).RemoveFileCommand}"
                                                 CommandParameter="{Binding}"
                                                 ToolTip.Tip="Убрать из списка">

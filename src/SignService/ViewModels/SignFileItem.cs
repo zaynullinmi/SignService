@@ -1,4 +1,7 @@
+using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace SignService.ViewModels;
@@ -43,10 +46,49 @@ public partial class SignFileItem : ObservableObject
     [ObservableProperty]
     private string? _signaturePath;
 
+    /// <summary>Число подписантов в созданном .sig (после соподписания может быть больше 1).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(StatusDisplay))]
+    private int _signerCount;
+
+    private readonly List<string> _extraSignatures = new();
+
+    /// <summary>Приложенные подписи других лиц для объединения (пути к .sig).</summary>
+    public IReadOnlyList<string> ExtraSignatures => _extraSignatures;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasExtra))]
+    [NotifyPropertyChangedFor(nameof(ExtraDisplay))]
+    private int _extraCount;
+
+    public bool HasExtra => ExtraCount > 0;
+
+    public string ExtraDisplay => $"＋ подписей: {ExtraCount}";
+
+    /// <summary>Прикладывает файлы подписей других лиц (дубликаты пропускаются).</summary>
+    public int AttachSignatures(IEnumerable<string> sigPaths)
+    {
+        var added = 0;
+        foreach (var path in sigPaths)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                continue;
+            if (_extraSignatures.Any(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            _extraSignatures.Add(path);
+            added++;
+        }
+
+        ExtraCount = _extraSignatures.Count;
+        return added;
+    }
+
     public string StatusDisplay => Status switch
     {
         SignStatus.Pending => "Ожидает",
         SignStatus.Signing => "Подписывается…",
+        SignStatus.Signed when SignerCount > 1 =>
+            $"Подписан (подписантов: {SignerCount}) → {Path.GetFileName(SignaturePath)}",
         SignStatus.Signed => $"Подписан → {Path.GetFileName(SignaturePath)}",
         SignStatus.Failed => $"Ошибка: {Message}",
         _ => string.Empty,

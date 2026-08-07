@@ -22,6 +22,9 @@ public class AppSettings
     /// <summary>Откреплённая (true) или прикреплённая (false) подпись.</summary>
     public bool DetachedSignature { get; set; } = true;
 
+    /// <summary>Объединять свою подпись с существующим .sig (соподписание).</summary>
+    public bool MergeWithExisting { get; set; } = true;
+
     public static AppSettings Load()
     {
         try

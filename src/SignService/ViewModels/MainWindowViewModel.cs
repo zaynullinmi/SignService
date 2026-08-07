@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
@@ -23,6 +24,7 @@ public partial class MainWindowViewModel : ObservableObject
 
         _initializing = true;
         IsDetached = _settings.DetachedSignature;
+        MergeWithExisting = _settings.MergeWithExisting;
         _initializing = false;
 
         Files.CollectionChanged += (_, _) => SignAllCommand.NotifyCanExecuteChanged();
@@ -40,6 +42,13 @@ public partial class MainWindowViewModel : ObservableObject
     /// <summary>Откреплённая подпись (.sig отдельно от документа) — режим по умолчанию.</summary>
     [ObservableProperty]
     private bool _isDetached = true;
+
+    /// <summary>
+    /// Объединять свою подпись с уже существующим файлом .sig рядом с документом
+    /// (соподписание) вместо его замены.
+    /// </summary>
+    [ObservableProperty]
+    private bool _mergeWithExisting = true;
 
     [ObservableProperty]
     private bool _includeExpiredCertificates;
@@ -59,6 +68,9 @@ public partial class MainWindowViewModel : ObservableObject
     /// </summary>
     public event EventHandler? BrowseRequested;
 
+    /// <summary>Запрос диалога выбора .sig других лиц для объединения с подписью файла.</summary>
+    public event EventHandler<SignFileItem>? AttachSignaturesRequested;
+
     partial void OnIncludeExpiredCertificatesChanged(bool value) => RefreshCertificates();
 
     // Как в ReportGGE: выбор запоминается, следующий запуск подписывает тем же
@@ -76,6 +88,14 @@ public partial class MainWindowViewModel : ObservableObject
         if (_initializing)
             return;
         _settings.DetachedSignature = value;
+        _settings.Save();
+    }
+
+    partial void OnMergeWithExistingChanged(bool value)
+    {
+        if (_initializing)
+            return;
+        _settings.MergeWithExisting = value;
         _settings.Save();
     }
 
@@ -110,16 +130,31 @@ public partial class MainWindowViewModel : ObservableObject
 
     private bool CanBrowse() => !IsBusy;
 
-    /// <summary>Добавляет файлы в очередь, пропуская дубликаты и файлы подписей.</summary>
+    /// <summary>
+    /// Добавляет файлы в очередь. Файл подписи .sig прикладывается к своему
+    /// документу для объединения, если документ уже в списке (по имени: "документ.pdf.sig"
+    /// → "документ.pdf"); иначе пропускается.
+    /// </summary>
     public void AddFiles(params string[] filePaths)
     {
-        var added = 0;
+        int added = 0, attached = 0, skippedSigs = 0;
         foreach (var path in filePaths)
         {
             if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path))
                 continue;
+
             if (path.EndsWith(".sig", StringComparison.OrdinalIgnoreCase))
+            {
+                var documentPath = path[..^4];
+                var target = Files.FirstOrDefault(f =>
+                    string.Equals(f.FilePath, documentPath, StringComparison.OrdinalIgnoreCase));
+                if (target is not null)
+                    attached += target.AttachSignatures(new[] { path });
+                else
+                    skippedSigs++;
                 continue;
+            }
+
             if (Files.Any(f => string.Equals(f.FilePath, path, StringComparison.OrdinalIgnoreCase)))
                 continue;
 
@@ -127,9 +162,20 @@ public partial class MainWindowViewModel : ObservableObject
             added++;
         }
 
-        if (added > 0)
-            StatusText = $"Добавлено файлов: {added}. Всего в очереди: {Files.Count}";
+        var parts = new List<string>();
+        if (added > 0) parts.Add($"добавлено файлов: {added}");
+        if (attached > 0) parts.Add($"приложено подписей: {attached}");
+        if (skippedSigs > 0) parts.Add($"пропущено .sig без документа в списке: {skippedSigs}");
+        if (parts.Count > 0)
+        {
+            var summary = string.Join(", ", parts);
+            StatusText = char.ToUpper(summary[0]) + summary[1..] + $". Всего в очереди: {Files.Count}";
+        }
     }
+
+    /// <summary>Открыть диалог выбора подписей других лиц для файла.</summary>
+    [RelayCommand]
+    private void AttachSignatures(SignFileItem item) => AttachSignaturesRequested?.Invoke(this, item);
 
     [RelayCommand]
     private void RemoveFile(SignFileItem item) => Files.Remove(item);
@@ -164,10 +210,14 @@ public partial class MainWindowViewModel : ObservableObject
 
                 try
                 {
-                    // Task.Run: ComputeSignature может блокировать (диалог PIN-кода CSP),
+                    // Task.Run: подпись может блокировать (диалог PIN-кода CSP),
                     // не держим UI-поток.
-                    file.SignaturePath = await Task.Run(
-                        () => _documentSigner.SignFileAsync(file.FilePath, certificate, IsDetached));
+                    var result = await Task.Run(
+                        () => _documentSigner.SignFileAsync(
+                            file.FilePath, certificate, IsDetached,
+                            MergeWithExisting, file.ExtraSignatures));
+                    file.SignaturePath = result.SignaturePath;
+                    file.SignerCount = result.SignerCount;
                     file.Status = SignStatus.Signed;
                     signed++;
                 }

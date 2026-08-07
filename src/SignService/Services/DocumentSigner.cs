@@ -19,8 +19,14 @@ namespace SignService.Services;
 /// </summary>
 public class DocumentSigner
 {
+    /// <summary>Результат подписания файла: путь к .sig и число подписантов в нём.</summary>
+    public readonly record struct SignFileResult(string SignaturePath, int SignerCount);
+
     /// <summary>
     /// Подписывает файл и сохраняет подпись рядом с ним в файле "&lt;имя&gt;.sig".
+    /// При необходимости объединяет свою подпись с уже существующей .sig и/или
+    /// с приложенными подписями других лиц (соподписание) — итоговый файл содержит
+    /// всех подписантов.
     /// </summary>
     /// <param name="filePath">Путь к подписываемому файлу.</param>
     /// <param name="certificate">Сертификат с закрытым ключом.</param>
@@ -28,20 +34,34 @@ public class DocumentSigner
     /// true — откреплённая подпись (файл .sig содержит только подпись, как требуют
     /// госпорталы и большинство контрагентов); false — прикреплённая (документ внутри .sig).
     /// </param>
-    /// <returns>Путь к созданному файлу подписи.</returns>
-    public async Task<string> SignFileAsync(
+    /// <param name="mergeWithExisting">Объединять ли с уже существующим файлом "&lt;имя&gt;.sig".</param>
+    /// <param name="extraSignatures">Пути к .sig других подписантов для объединения.</param>
+    public async Task<SignFileResult> SignFileAsync(
         string filePath,
         X509Certificate2 certificate,
         bool detached = true,
+        bool mergeWithExisting = false,
+        IReadOnlyList<string>? extraSignatures = null,
         CancellationToken cancellationToken = default)
     {
         var data = await File.ReadAllBytesAsync(filePath, cancellationToken);
-
-        var signature = Sign(data, certificate, detached);
-
         var signaturePath = filePath + ".sig";
-        await File.WriteAllBytesAsync(signaturePath, signature, cancellationToken);
-        return signaturePath;
+
+        // Свою подпись создаём ДО чтения объединяемых файлов, чтобы ошибка
+        // подписания не оставила .sig наполовину обработанным.
+        var own = Sign(data, certificate, detached);
+
+        var inputs = new List<byte[]>();
+        if (mergeWithExisting && File.Exists(signaturePath))
+            inputs.Add(await File.ReadAllBytesAsync(signaturePath, cancellationToken));
+        foreach (var path in extraSignatures ?? Array.Empty<string>())
+            inputs.Add(await File.ReadAllBytesAsync(path, cancellationToken));
+        inputs.Add(own); // своя — последней: при совпадении подписанта она побеждает
+
+        var result = inputs.Count == 1 ? own : CmsMerger.Merge(inputs);
+
+        await File.WriteAllBytesAsync(signaturePath, result, cancellationToken);
+        return new SignFileResult(signaturePath, inputs.Count == 1 ? 1 : CmsMerger.CountSigners(result));
     }
 
     /// <summary>
