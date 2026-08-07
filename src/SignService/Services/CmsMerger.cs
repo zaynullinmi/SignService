@@ -192,13 +192,32 @@ internal static class CmsMerger
 
     /// <summary>
     /// Подпись может прийти в бинарном DER (начинается с 0x30) либо как base64-текст,
-    /// возможно в PEM-обёртке (как в ReportGGE). Приводим к бинарному виду.
+    /// возможно в PEM-обёртке (как в ReportGGE). Приводим к бинарному виду. Затем
+    /// перекодируем BER → definite-length (КриптоПро и порталы часто пишут подписи
+    /// с неопределённой длиной, которые ASN.1-писатель .NET не принимает) — заодно
+    /// отбрасывается «хвост» после подписи.
     /// </summary>
     public static byte[] Normalize(byte[] data)
     {
-        if (data.Length == 0 || data[0] == 0x30)
-            return data;
+        var binary = data.Length == 0 || data[0] == 0x30 ? data : DecodeBase64(data);
 
+        if (binary.Length > 0 && binary[0] == 0x30)
+        {
+            try
+            {
+                return BerDer.ToDefinite(binary);
+            }
+            catch (AsnContentException)
+            {
+                // оставляем как есть — понятная ошибка возникнет при разборе
+            }
+        }
+
+        return binary;
+    }
+
+    private static byte[] DecodeBase64(byte[] data)
+    {
         try
         {
             var text = Encoding.ASCII.GetString(data);
