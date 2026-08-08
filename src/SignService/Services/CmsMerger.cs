@@ -179,6 +179,107 @@ internal static class CmsMerger
     /// <summary>Число подписантов в CMS-подписи (для отображения).</summary>
     public static int CountSigners(byte[] signature) => Parse(Normalize(signature)).Signers.Count;
 
+    /// <summary>Сводка по контейнеру: прикреплённый ли и имена подписантов.</summary>
+    public sealed record ContainerInfo(bool HasContent, IReadOnlyList<string> SignerNames);
+
+    public static ContainerInfo Inspect(byte[] signature)
+    {
+        var parsed = Parse(Normalize(signature));
+        var certIndex = BuildCertIndex(new List<ParsedSignedData> { parsed });
+        var names = parsed.Signers.Select(s => SignerDisplayName(s.Der, certIndex)).ToList();
+        return new ContainerInfo(parsed.HasContent, names);
+    }
+
+    /// <summary>
+    /// Извлекает вложенный документ из прикреплённой подписи;
+    /// null — если подпись откреплённая (документа внутри нет).
+    /// </summary>
+    public static byte[]? ExtractContent(byte[] signature)
+    {
+        var parsed = Parse(Normalize(signature));
+        if (!parsed.HasContent)
+            return null;
+
+        var encap = new AsnReader(parsed.EncapContentInfo, AsnEncodingRules.BER).ReadSequence();
+        encap.ReadObjectIdentifier();                                          // eContentType
+        var explicit0 = encap.ReadSequence(new Asn1Tag(TagClass.ContextSpecific, 0));
+        return ReadOctetStringData(explicit0);
+    }
+
+    /// <summary>
+    /// Преобразует прикреплённую подпись в откреплённую: из контейнера убирается
+    /// вложенный документ, подписанты и сертификаты сохраняются.
+    /// </summary>
+    public static byte[] ConvertToDetached(byte[] signature)
+    {
+        var parsed = Parse(Normalize(signature));
+        parsed.EncapContentInfo = StripContent(parsed.EncapContentInfo);
+        parsed.HasContent = false;
+        return BuildMerged(new List<ParsedSignedData> { parsed });
+    }
+
+    /// <summary>
+    /// Разбирает контейнер на отдельные откреплённые подписи — по одной на каждого
+    /// подписанта (имя — CN из вложенного сертификата). Сертификаты и CRL сохраняются
+    /// в каждой части целиком.
+    /// </summary>
+    public static IReadOnlyList<(string SignerName, byte[] Signature)> SplitBySigner(byte[] signature)
+    {
+        var parsed = Parse(Normalize(signature));
+        var certIndex = BuildCertIndex(new List<ParsedSignedData> { parsed });
+        var strippedEncap = StripContent(parsed.EncapContentInfo);
+
+        var result = new List<(string, byte[])>();
+        foreach (var signer in parsed.Signers)
+        {
+            var single = new ParsedSignedData
+            {
+                Version = parsed.Version,
+                EncapContentInfo = strippedEncap,
+                HasContent = false,
+            };
+            single.DigestAlgorithms.AddRange(parsed.DigestAlgorithms);
+            single.Certificates.AddRange(parsed.Certificates);
+            single.Crls.AddRange(parsed.Crls);
+            single.Signers.Add(signer);
+
+            result.Add((SignerDisplayName(signer.Der, certIndex),
+                BuildMerged(new List<ParsedSignedData> { single })));
+        }
+
+        return result;
+    }
+
+    // EncapContentInfo без eContent: SEQUENCE { eContentType } — для откреплённой подписи.
+    private static byte[] StripContent(byte[] encapContentInfo)
+    {
+        var encap = new AsnReader(encapContentInfo, AsnEncodingRules.BER).ReadSequence();
+        var contentType = encap.ReadObjectIdentifier();
+
+        var writer = new AsnWriter(AsnEncodingRules.DER);
+        using (writer.PushSequence())
+            writer.WriteObjectIdentifier(contentType);
+        return writer.Encode();
+    }
+
+    // Содержимое OCTET STRING: примитивного либо составного (BER-чанки, как пишет КриптоПро).
+    private static byte[] ReadOctetStringData(AsnReader reader)
+    {
+        if (reader.TryReadPrimitiveOctetString(out var primitive))
+            return primitive.ToArray();
+
+        var constructedTag = new Asn1Tag(TagClass.Universal, (int)UniversalTagNumber.OctetString, isConstructed: true);
+        var chunks = reader.ReadSequence(constructedTag);
+        using var output = new System.IO.MemoryStream();
+        while (chunks.HasData)
+        {
+            var chunk = ReadOctetStringData(chunks);
+            output.Write(chunk, 0, chunk.Length);
+        }
+
+        return output.ToArray();
+    }
+
     private static ParsedSignedData Parse(byte[] cms)
     {
         try

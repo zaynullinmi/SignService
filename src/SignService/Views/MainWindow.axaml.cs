@@ -25,6 +25,7 @@ public partial class MainWindow : Window
             {
                 vm.BrowseRequested += async (_, _) => await BrowseFilesAsync(vm);
                 vm.AttachSignaturesRequested += async (_, item) => await BrowseSignaturesAsync(item);
+                vm.ExtractRequested += async (_, _) => await BrowseContainersAsync(vm);
             }
         };
     }
@@ -117,5 +118,28 @@ public partial class MainWindow : Window
 
         if (added > 0 && DataContext is MainWindowViewModel vm)
             vm.StatusText = $"Приложено подписей к «{item.FileName}»: {added} (всего: {item.ExtraCount})";
+    }
+
+    private async System.Threading.Tasks.Task BrowseContainersAsync(MainWindowViewModel vm)
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Выберите криптоконтейнеры для извлечения",
+            AllowMultiple = true,
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("Подписи CMS (*.sig, *.p7s, *.p7m)")
+                {
+                    Patterns = new[] { "*.sig", "*.p7s", "*.p7m" },
+                },
+                FilePickerFileTypes.All,
+            },
+        });
+
+        await vm.ExtractContainersAsync(files
+            .Select(f => f.TryGetLocalPath())
+            .Where(p => p is not null)
+            .Select(p => p!)
+            .ToList());
     }
 }

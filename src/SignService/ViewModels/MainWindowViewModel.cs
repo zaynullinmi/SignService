@@ -71,6 +71,9 @@ public partial class MainWindowViewModel : ObservableObject
     /// <summary>Запрос диалога выбора .sig других лиц для объединения с подписью файла.</summary>
     public event EventHandler<SignFileItem>? AttachSignaturesRequested;
 
+    /// <summary>Запрос диалога выбора контейнеров для извлечения.</summary>
+    public event EventHandler? ExtractRequested;
+
     partial void OnIncludeExpiredCertificatesChanged(bool value) => RefreshCertificates();
 
     // Как в ReportGGE: выбор запоминается, следующий запуск подписывает тем же
@@ -176,6 +179,49 @@ public partial class MainWindowViewModel : ObservableObject
     /// <summary>Открыть диалог выбора подписей других лиц для файла.</summary>
     [RelayCommand]
     private void AttachSignatures(SignFileItem item) => AttachSignaturesRequested?.Invoke(this, item);
+
+    [RelayCommand(CanExecute = nameof(CanBrowse))]
+    private void Extract() => ExtractRequested?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>Извлекает содержимое выбранных контейнеров в файлы рядом с ними.</summary>
+    public async Task ExtractContainersAsync(IReadOnlyList<string> containerPaths)
+    {
+        if (containerPaths.Count == 0)
+            return;
+
+        IsBusy = true;
+        try
+        {
+            var lines = new List<string>();
+            foreach (var path in containerPaths)
+            {
+                try
+                {
+                    var r = await Task.Run(() => CmsExtractor.ExtractToFiles(path));
+                    var parts = new List<string>();
+                    if (r.DocumentPath is not null)
+                        parts.Add($"документ → {System.IO.Path.GetFileName(r.DocumentPath)}");
+                    if (r.DetachedPath is not null)
+                        parts.Add($"откреплённая подпись → {System.IO.Path.GetFileName(r.DetachedPath)}");
+                    if (r.SignerFiles.Count > 0)
+                        parts.Add($"подписи по подписантам: {r.SignerFiles.Count}");
+                    if (parts.Count == 0)
+                        parts.Add($"уже откреплённая, подписантов: {r.SignerCount} — извлекать нечего");
+                    lines.Add($"«{r.ContainerName}»: {string.Join(", ", parts)}");
+                }
+                catch (Exception ex)
+                {
+                    lines.Add($"«{System.IO.Path.GetFileName(path)}»: ошибка — {ex.Message}");
+                }
+            }
+
+            StatusText = "Извлечение: " + string.Join(" | ", lines);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
 
     [RelayCommand]
     private void RemoveFile(SignFileItem item) => Files.Remove(item);
