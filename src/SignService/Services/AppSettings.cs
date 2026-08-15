@@ -25,6 +25,21 @@ public class AppSettings
     /// <summary>Объединять свою подпись с существующим .sig (соподписание).</summary>
     public bool MergeWithExisting { get; set; } = true;
 
+    /// <summary>Добавлять штамп времени TSA (CAdES-T) в подпись.</summary>
+    public bool UseTimestamp { get; set; }
+
+    /// <summary>Адрес службы штампов времени (RFC 3161).</summary>
+    public string TsaUrl { get; set; } = "";
+
+    /// <summary>Ставить визуальный штамп о подписании на PDF.</summary>
+    public bool UseStamp { get; set; }
+
+    /// <summary>Включать дату подписания в визуальный штамп.</summary>
+    public bool StampWithDate { get; set; } = true;
+
+    /// <summary>Путь к логотипу организации для штампа (PNG/JPEG).</summary>
+    public string? StampLogoPath { get; set; }
+
     public static AppSettings Load()
     {
         try

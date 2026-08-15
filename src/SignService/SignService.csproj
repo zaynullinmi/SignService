@@ -24,7 +24,14 @@
     <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.18" />
     <PackageReference Include="Avalonia.Diagnostics" Version="11.3.18" Condition="'$(Configuration)' == 'Debug'" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
+    <PackageReference Include="PDFsharp" Version="6.2.4" />
     <PackageReference Include="System.Security.Cryptography.Pkcs" Version="8.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Кириллический шрифт для штампа на PDF (DejaVu — свободная лицензия). -->
+    <EmbeddedResource Include="Assets\Fonts\DejaVuSans.ttf" />
+    <EmbeddedResource Include="Assets\Fonts\DejaVuSans-Bold.ttf" />
   </ItemGroup>
 
 </Project>

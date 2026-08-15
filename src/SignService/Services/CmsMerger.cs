@@ -250,6 +250,94 @@ internal static class CmsMerger
         return result;
     }
 
+    /// <summary>Значение подписи (поле signature из SignerInfo) первого подписанта.</summary>
+    public static byte[] GetSignatureValue(byte[] signature)
+    {
+        var parsed = Parse(Normalize(signature));
+        if (parsed.Signers.Count == 0)
+            throw new InvalidOperationException("В подписи нет подписантов.");
+
+        foreach (var (tag, der) in SignerElements(parsed.Signers[0].Der))
+        {
+            if (tag == new Asn1Tag(UniversalTagNumber.OctetString))
+                return new AsnReader(der, AsnEncodingRules.BER).ReadOctetString();
+        }
+
+        throw new InvalidOperationException("В SignerInfo не найдено значение подписи.");
+    }
+
+    /// <summary>
+    /// Добавляет неподписанный (unsigned) атрибут первому подписанту —
+    /// например, штамп времени CAdES-T. Значение подписи при этом не меняется,
+    /// поэтому подпись остаётся действительной.
+    /// </summary>
+    public static byte[] AddUnsignedAttribute(byte[] signature, string attrOid, byte[] attrValue)
+    {
+        var parsed = Parse(Normalize(signature));
+        if (parsed.Signers.Count == 0)
+            throw new InvalidOperationException("В подписи нет подписантов.");
+
+        var elements = SignerElements(parsed.Signers[0].Der);
+        var unsignedTag = new Asn1Tag(TagClass.ContextSpecific, 1, isConstructed: true);
+
+        // Attribute ::= SEQUENCE { attrType OID, attrValues SET OF ANY }
+        var attrWriter = new AsnWriter(AsnEncodingRules.DER);
+        using (attrWriter.PushSequence())
+        {
+            attrWriter.WriteObjectIdentifier(attrOid);
+            using (attrWriter.PushSetOf())
+                attrWriter.WriteEncodedValue(attrValue);
+        }
+
+        var newAttr = attrWriter.Encode();
+
+        var writer = new AsnWriter(AsnEncodingRules.DER);
+        using (writer.PushSequence())
+        {
+            var unsignedWritten = false;
+            foreach (var (tag, der) in elements)
+            {
+                if (tag == unsignedTag)
+                {
+                    // дополняем существующий unsignedAttrs
+                    using (writer.PushSetOf(unsignedTag))
+                    {
+                        var existing = new AsnReader(der, AsnEncodingRules.BER).ReadSetOf(unsignedTag);
+                        while (existing.HasData)
+                            writer.WriteEncodedValue(existing.ReadEncodedValue().Span);
+                        writer.WriteEncodedValue(newAttr);
+                    }
+
+                    unsignedWritten = true;
+                }
+                else
+                {
+                    writer.WriteEncodedValue(der);
+                }
+            }
+
+            if (!unsignedWritten)
+            {
+                using (writer.PushSetOf(unsignedTag))
+                    writer.WriteEncodedValue(newAttr);
+            }
+        }
+
+        var newSigner = writer.Encode();
+        parsed.Signers[0] = (parsed.Signers[0].SidKey, newSigner);
+        return BuildMerged(new List<ParsedSignedData> { parsed });
+    }
+
+    // Элементы верхнего уровня SignerInfo в исходном порядке (тег + TLV).
+    private static List<(Asn1Tag Tag, byte[] Der)> SignerElements(byte[] signerInfoDer)
+    {
+        var reader = new AsnReader(signerInfoDer, AsnEncodingRules.BER).ReadSequence();
+        var elements = new List<(Asn1Tag, byte[])>();
+        while (reader.HasData)
+            elements.Add((reader.PeekTag(), reader.ReadEncodedValue().ToArray()));
+        return elements;
+    }
+
     // EncapContentInfo без eContent: SEQUENCE { eContentType } — для откреплённой подписи.
     private static byte[] StripContent(byte[] encapContentInfo)
     {

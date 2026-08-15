@@ -19,16 +19,48 @@ namespace SignService.Services;
 /// </summary>
 public class DocumentSigner
 {
+    /// <summary>Параметры подписания файла.</summary>
+    public sealed record SignOptions
+    {
+        /// <summary>Откреплённая (true) или прикреплённая подпись.</summary>
+        public bool Detached { get; init; } = true;
+
+        /// <summary>Объединять ли с уже существующим файлом .sig (соподписание).</summary>
+        public bool MergeWithExisting { get; init; }
+
+        /// <summary>Пути к .sig других подписантов для объединения.</summary>
+        public IReadOnlyList<string> ExtraSignatures { get; init; } = Array.Empty<string>();
+
+        /// <summary>Добавлять ли штамп времени TSA (CAdES-T) в подпись.</summary>
+        public bool Timestamp { get; init; }
+
+        /// <summary>Адрес службы штампов времени (RFC 3161).</summary>
+        public string? TsaUrl { get; init; }
+
+        /// <summary>Ставить ли визуальный штамп о подписании на PDF-документ.</summary>
+        public bool Stamp { get; init; }
+
+        /// <summary>Включать ли дату подписания в визуальный штамп.</summary>
+        public bool StampWithDate { get; init; } = true;
+
+        /// <summary>Путь к картинке логотипа для штампа (PNG/JPEG) или null.</summary>
+        public string? StampLogoPath { get; init; }
+    }
+
     /// <summary>
-    /// Результат подписания файла: путь к .sig, число подписантов в нём,
-    /// исключённые при объединении подписи (не соответствуют документу) и подписи,
-    /// которые проверить было нечем (сохранены как есть).
+    /// Результат подписания файла: подписанный документ (для PDF со штампом — путь
+    /// к штампованной копии), путь к .sig, число подписантов в нём, исключённые при
+    /// объединении подписи (не соответствуют документу) и подписи, которые
+    /// проверить было нечем (сохранены как есть).
     /// </summary>
     public readonly record struct SignFileResult(
+        string SignedDocumentPath,
         string SignaturePath,
         int SignerCount,
         IReadOnlyList<string> ExcludedSigners,
         IReadOnlyList<string> UnverifiedSigners);
+
+    private readonly TimestampClient _timestampClient = new();
 
     /// <summary>
     /// Подписывает файл и сохраняет подпись рядом с ним в файле "&lt;имя&gt;.sig".
@@ -44,32 +76,75 @@ public class DocumentSigner
     /// </param>
     /// <param name="mergeWithExisting">Объединять ли с уже существующим файлом "&lt;имя&gt;.sig".</param>
     /// <param name="extraSignatures">Пути к .sig других подписантов для объединения.</param>
-    public async Task<SignFileResult> SignFileAsync(
+    public Task<SignFileResult> SignFileAsync(
         string filePath,
         X509Certificate2 certificate,
         bool detached = true,
         bool mergeWithExisting = false,
         IReadOnlyList<string>? extraSignatures = null,
         CancellationToken cancellationToken = default)
+        => SignFileAsync(filePath, certificate, new SignOptions
+        {
+            Detached = detached,
+            MergeWithExisting = mergeWithExisting,
+            ExtraSignatures = extraSignatures ?? Array.Empty<string>(),
+        }, cancellationToken);
+
+    public async Task<SignFileResult> SignFileAsync(
+        string filePath,
+        X509Certificate2 certificate,
+        SignOptions options,
+        CancellationToken cancellationToken = default)
     {
-        var data = await File.ReadAllBytesAsync(filePath, cancellationToken);
-        var signaturePath = filePath + ".sig";
+        // Визуальный штамп меняет содержимое PDF, поэтому копия со штампом
+        // создаётся ДО подписания и подписывается именно она.
+        var targetPath = filePath;
+        if (options.Stamp && PdfStamper.IsPdf(filePath))
+        {
+            try
+            {
+                targetPath = PdfStamper.CreateStampedCopy(
+                    filePath, certificate, options.StampWithDate, options.StampLogoPath, DateTime.Now);
+            }
+            catch (Exception e)
+            {
+                throw new InvalidOperationException(
+                    $"Не удалось поставить штамп на PDF ({e.Message}). " +
+                    "Проверьте, что файл — корректный незашифрованный PDF, либо отключите штамп.", e);
+            }
+        }
+
+        var data = await File.ReadAllBytesAsync(targetPath, cancellationToken);
+        var signaturePath = targetPath + ".sig";
 
         // Свою подпись создаём ДО чтения объединяемых файлов, чтобы ошибка
         // подписания не оставила .sig наполовину обработанным.
-        var own = Sign(data, certificate, detached);
+        var own = Sign(data, certificate, options.Detached);
+
+        // Штамп времени TSA (CAdES-T) — неподписанный атрибут на значение подписи.
+        if (options.Timestamp)
+        {
+            if (string.IsNullOrWhiteSpace(options.TsaUrl))
+                throw new InvalidOperationException(
+                    "Для подписи со штампом времени укажите адрес службы штампов времени (TSA).");
+
+            var token = await _timestampClient.RequestTokenAsync(
+                CmsMerger.GetSignatureValue(own), IsGost(certificate), options.TsaUrl, cancellationToken);
+            own = CmsMerger.AddUnsignedAttribute(own, TimestampClient.TimeStampTokenOid, token);
+        }
 
         var inputs = new List<byte[]>();
-        if (mergeWithExisting && File.Exists(signaturePath))
+        if (options.MergeWithExisting && File.Exists(signaturePath))
             inputs.Add(await File.ReadAllBytesAsync(signaturePath, cancellationToken));
-        foreach (var path in extraSignatures ?? Array.Empty<string>())
+        foreach (var path in options.ExtraSignatures)
             inputs.Add(await File.ReadAllBytesAsync(path, cancellationToken));
         inputs.Add(own); // своя — последней: при совпадении подписанта она побеждает
 
         if (inputs.Count == 1)
         {
             await File.WriteAllBytesAsync(signaturePath, own, cancellationToken);
-            return new SignFileResult(signaturePath, 1, Array.Empty<string>(), Array.Empty<string>());
+            return new SignFileResult(
+                targetPath, signaturePath, 1, Array.Empty<string>(), Array.Empty<string>());
         }
 
         // Объединение с проверкой: подписи под другим файлом или прежней версией
@@ -77,7 +152,7 @@ public class DocumentSigner
         var merged = CmsMerger.MergeForDocument(inputs, data);
         await File.WriteAllBytesAsync(signaturePath, merged.Signature, cancellationToken);
         return new SignFileResult(
-            signaturePath, merged.SignerCount, merged.ExcludedSigners, merged.UnverifiedSigners);
+            targetPath, signaturePath, merged.SignerCount, merged.ExcludedSigners, merged.UnverifiedSigners);
     }
 
     /// <summary>

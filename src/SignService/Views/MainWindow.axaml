@@ -9,7 +9,7 @@
         WindowStartupLocation="CenterScreen"
         DragDrop.AllowDrop="True">
 
-    <Grid Margin="16" RowDefinitions="Auto,Auto,*,Auto,Auto">
+    <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,*,Auto,Auto">
 
         <!-- Выбор сертификата -->
         <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,8">
@@ -49,8 +49,43 @@
                       Content="Показывать просроченные сертификаты"/>
         </WrapPanel>
 
+        <!-- Штампы -->
+        <WrapPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
+            <CheckBox Margin="0,0,8,4"
+                      IsChecked="{Binding UseTimestamp}"
+                      Content="Штамп времени в подписи (CAdES-T)"
+                      ToolTip.Tip="Подпись с меткой доверенного времени от службы TSA (RFC 3161). Без галочки — обычная усиленная подпись CAdES-BES."/>
+            <TextBox Margin="0,0,16,4" Width="250" MaxHeight="30"
+                     Text="{Binding TsaUrl}"
+                     Watermark="Адрес TSA, например http://…/tsp"
+                     IsEnabled="{Binding UseTimestamp}"
+                     ToolTip.Tip="Адрес службы штампов времени (RFC 3161), например службы вашего УЦ"/>
+            <CheckBox Margin="0,0,8,4"
+                      IsChecked="{Binding UseStamp}"
+                      Content="Штамп на документ (PDF)"
+                      ToolTip.Tip="На последней странице PDF ставится плашка «Документ подписан электронной подписью» с данными сертификата. Подписывается копия «имя (со штампом).pdf», исходный файл не меняется."/>
+            <CheckBox Margin="0,0,8,4"
+                      IsChecked="{Binding StampWithDate}"
+                      IsEnabled="{Binding UseStamp}"
+                      Content="с датой подписания"/>
+            <Button Margin="0,0,4,4" Padding="8,3"
+                    Command="{Binding PickLogoCommand}"
+                    IsEnabled="{Binding UseStamp}"
+                    Content="Лого…"
+                    ToolTip.Tip="Картинка логотипа организации (PNG/JPEG) для штампа"/>
+            <TextBlock Margin="0,0,4,4" VerticalAlignment="Center"
+                       Text="{Binding StampLogoDisplay}"
+                       Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
+            <Button Margin="0,0,0,4" Padding="6,3"
+                    Command="{Binding ClearLogoCommand}"
+                    IsEnabled="{Binding UseStamp}"
+                    ToolTip.Tip="Убрать логотип">
+                <TextBlock Text="✕" FontSize="10"/>
+            </Button>
+        </WrapPanel>
+
         <!-- Зона перетаскивания / список файлов -->
-        <Border Grid.Row="2"
+        <Border Grid.Row="3"
                 Name="DropZone"
                 BorderThickness="2"
                 BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
@@ -125,7 +160,7 @@
         </Border>
 
         <!-- Кнопки -->
-        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
+        <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
             <Button Content="Обзор…" Command="{Binding BrowseCommand}"/>
             <Button Content="Извлечь из .sig…" Command="{Binding ExtractCommand}"
                     ToolTip.Tip="Извлечь из криптоконтейнера: документ из прикреплённой подписи, откреплённую подпись и отдельные подписи по каждому подписанту. Файлы создаются рядом с контейнером."/>
@@ -141,7 +176,7 @@
         </StackPanel>
 
         <!-- Статусная строка -->
-        <Grid Grid.Row="4" ColumnDefinitions="*,Auto" Margin="0,10,0,0">
+        <Grid Grid.Row="5" ColumnDefinitions="*,Auto" Margin="0,10,0,0">
             <TextBlock Grid.Column="0" Text="{Binding StatusText}"
                        Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
                        TextTrimming="CharacterEllipsis"/>

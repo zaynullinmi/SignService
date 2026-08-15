@@ -25,6 +25,11 @@ public partial class MainWindowViewModel : ObservableObject
         _initializing = true;
         IsDetached = _settings.DetachedSignature;
         MergeWithExisting = _settings.MergeWithExisting;
+        UseTimestamp = _settings.UseTimestamp;
+        TsaUrl = _settings.TsaUrl;
+        UseStamp = _settings.UseStamp;
+        StampWithDate = _settings.StampWithDate;
+        StampLogoPath = _settings.StampLogoPath;
         _initializing = false;
 
         Files.CollectionChanged += (_, _) => SignAllCommand.NotifyCanExecuteChanged();
@@ -52,6 +57,31 @@ public partial class MainWindowViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _includeExpiredCertificates;
+
+    /// <summary>Подпись со штампом времени TSA (CAdES-T) вместо обычной (CAdES-BES).</summary>
+    [ObservableProperty]
+    private bool _useTimestamp;
+
+    [ObservableProperty]
+    private string _tsaUrl = "";
+
+    /// <summary>Ставить визуальный штамп о подписании на PDF-документы.</summary>
+    [ObservableProperty]
+    private bool _useStamp;
+
+    [ObservableProperty]
+    private bool _stampWithDate = true;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(StampLogoDisplay))]
+    private string? _stampLogoPath;
+
+    public string StampLogoDisplay => StampLogoPath is null
+        ? "лого не выбрано"
+        : System.IO.Path.GetFileName(StampLogoPath);
+
+    /// <summary>Запрос диалога выбора картинки логотипа для штампа.</summary>
+    public event EventHandler? PickLogoRequested;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(SignAllCommand))]
@@ -101,6 +131,47 @@ public partial class MainWindowViewModel : ObservableObject
         _settings.MergeWithExisting = value;
         _settings.Save();
     }
+
+    partial void OnUseTimestampChanged(bool value)
+    {
+        if (_initializing) return;
+        _settings.UseTimestamp = value;
+        _settings.Save();
+    }
+
+    partial void OnTsaUrlChanged(string value)
+    {
+        if (_initializing) return;
+        _settings.TsaUrl = value;
+        _settings.Save();
+    }
+
+    partial void OnUseStampChanged(bool value)
+    {
+        if (_initializing) return;
+        _settings.UseStamp = value;
+        _settings.Save();
+    }
+
+    partial void OnStampWithDateChanged(bool value)
+    {
+        if (_initializing) return;
+        _settings.StampWithDate = value;
+        _settings.Save();
+    }
+
+    partial void OnStampLogoPathChanged(string? value)
+    {
+        if (_initializing) return;
+        _settings.StampLogoPath = value;
+        _settings.Save();
+    }
+
+    [RelayCommand]
+    private void PickLogo() => PickLogoRequested?.Invoke(this, EventArgs.Empty);
+
+    [RelayCommand]
+    private void ClearLogo() => StampLogoPath = null;
 
     [RelayCommand]
     private void RefreshCertificates()
@@ -258,10 +329,19 @@ public partial class MainWindowViewModel : ObservableObject
                 {
                     // Task.Run: подпись может блокировать (диалог PIN-кода CSP),
                     // не держим UI-поток.
+                    var options = new DocumentSigner.SignOptions
+                    {
+                        Detached = IsDetached,
+                        MergeWithExisting = MergeWithExisting,
+                        ExtraSignatures = file.ExtraSignatures,
+                        Timestamp = UseTimestamp,
+                        TsaUrl = TsaUrl,
+                        Stamp = UseStamp,
+                        StampWithDate = StampWithDate,
+                        StampLogoPath = StampLogoPath,
+                    };
                     var result = await Task.Run(
-                        () => _documentSigner.SignFileAsync(
-                            file.FilePath, certificate, IsDetached,
-                            MergeWithExisting, file.ExtraSignatures));
+                        () => _documentSigner.SignFileAsync(file.FilePath, certificate, options));
                     file.SignaturePath = result.SignaturePath;
                     file.SignerCount = result.SignerCount;
 

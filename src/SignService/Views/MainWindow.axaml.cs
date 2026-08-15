@@ -26,6 +26,7 @@ public partial class MainWindow : Window
                 vm.BrowseRequested += async (_, _) => await BrowseFilesAsync(vm);
                 vm.AttachSignaturesRequested += async (_, item) => await BrowseSignaturesAsync(item);
                 vm.ExtractRequested += async (_, _) => await BrowseContainersAsync(vm);
+                vm.PickLogoRequested += async (_, _) => await BrowseLogoAsync(vm);
             }
         };
     }
@@ -118,6 +119,26 @@ public partial class MainWindow : Window
 
         if (added > 0 && DataContext is MainWindowViewModel vm)
             vm.StatusText = $"Приложено подписей к «{item.FileName}»: {added} (всего: {item.ExtraCount})";
+    }
+
+    private async System.Threading.Tasks.Task BrowseLogoAsync(MainWindowViewModel vm)
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Логотип организации для штампа",
+            AllowMultiple = false,
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("Изображения (*.png, *.jpg)")
+                {
+                    Patterns = new[] { "*.png", "*.jpg", "*.jpeg" },
+                },
+            },
+        });
+
+        var path = files.FirstOrDefault()?.TryGetLocalPath();
+        if (path is not null)
+            vm.StampLogoPath = path;
     }
 
     private async System.Threading.Tasks.Task BrowseContainersAsync(MainWindowViewModel vm)
