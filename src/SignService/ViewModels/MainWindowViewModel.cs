@@ -93,6 +93,14 @@ public partial class MainWindowViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(SignAllCommand))]
     [NotifyCanExecuteChangedFor(nameof(BrowseCommand))]
     [NotifyCanExecuteChangedFor(nameof(ClearCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SaveCertificateCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DeleteCertificateCommand))]
+    [NotifyCanExecuteChangedFor(nameof(InstallCertificateCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RemoveFromStoreCommand))]
+    [NotifyCanExecuteChangedFor(nameof(StampOnlyCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ExtractCommand))]
+    [NotifyCanExecuteChangedFor(nameof(MergeFilesCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BuildContainerCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -345,35 +353,78 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
+    // Доступно и для сертификата из системного хранилища (ключ на токене):
+    // тогда установка сначала сохранит копию в программе (PFX), затем поставит
+    // её в хранилище — одним действием.
     private bool CanInstallCertificate() =>
-        !IsBusy && SelectedCertificate is { IsSaved: true };
+        !IsBusy && SelectedCertificate is { } sel
+            && (sel.IsSaved
+                || _settings.SavedCertificates.Any(c =>
+                    string.Equals(c.Thumbprint, sel.Thumbprint, StringComparison.OrdinalIgnoreCase))
+                || sel.Certificate.HasPrivateKey);
 
     /// <summary>
-    /// Устанавливает сохранённый на ПК сертификат в системное хранилище Windows —
-    /// чтобы им можно было подписывать и в ДРУГИХ программах (КриптоАРМ, браузер и т.д.).
+    /// Устанавливает сертификат в системное хранилище Windows с копией закрытого
+    /// ключа — чтобы им можно было подписывать и в ДРУГИХ программах (КриптоАРМ,
+    /// браузер и т.д.) без подключённого ключа ЭЦП. Для сертификата с токена
+    /// ключ сначала экспортируется в PFX программы, затем копия устанавливается
+    /// в хранилище (существующая запись, указывающая на токен, заменяется).
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanInstallCertificate))]
     private async Task InstallCertificateAsync()
     {
-        if (SelectedCertificate is not { Saved: { } saved } item || RequestPasswordAsync is null)
+        if (SelectedCertificate is not { } item || RequestPasswordAsync is null)
             return;
 
-        var password = await RequestPasswordAsync(
-            "Установка сертификата в хранилище Windows",
-            $"Сертификат «{item.Subject}» будет установлен в системное хранилище "
-            + "(«Текущий пользователь → Личное»). Введите пароль, заданный при сохранении.",
-            "⚠ ВНИМАНИЕ: после установки закрытый ключ станет доступен ВСЕМ программам, "
-            + "работающим под вашей учётной записью Windows (браузеры, КриптоАРМ и др.), — "
-            + "без ввода пароля этой программы. Ключ будет защищён средствами Windows. "
-            + "Устанавливайте только на личном компьютере и удалите из хранилища, "
-            + "когда перестанет быть нужен.",
-            false);
-        if (password is null)
-            return;
+        var saved = item.Saved ?? _settings.SavedCertificates.FirstOrDefault(c =>
+            string.Equals(c.Thumbprint, item.Thumbprint, StringComparison.OrdinalIgnoreCase));
 
         try
         {
-            await Task.Run(() => _vault.InstallToStore(saved, password, _settings));
+            if (saved is null)
+            {
+                // Сертификат из хранилища (обычно ключ на токене): экспорт + установка.
+                var password = await RequestPasswordAsync(
+                    "Установка сертификата в хранилище Windows",
+                    $"Сертификат «{item.Subject}» будет скопирован с ключа ЭЦП: сохранён "
+                    + "в программе (PFX, защищённый паролем) и установлен в хранилище Windows "
+                    + "(«Текущий пользователь → Личное») с копией закрытого ключа.",
+                    "⚠ ВНИМАНИЕ: закрытый ключ будет экспортирован с токена и останется на этом "
+                    + "компьютере. Подписывать им смогут ВСЕ программы под вашей учётной записью "
+                    + "Windows — уже без токена и без пароля этой программы. Существующая запись "
+                    + "в хранилище, указывающая на токен, будет заменена копией. Это менее "
+                    + "безопасно, чем токен: устанавливайте только на личном компьютере и удалите "
+                    + "из хранилища, когда перестанет быть нужен. Если ключ на токене помечен как "
+                    + "неэкспортируемый, операция завершится ошибкой — это ограничение токена.",
+                    true);
+                if (password is null)
+                    return;
+
+                var certificate = await ResolveSigningCertificateAsync(item);
+                if (certificate is null)
+                    return;
+
+                saved = await Task.Run(() => _vault.Save(certificate, password, _settings));
+                await Task.Run(() => _vault.InstallToStore(saved, password, _settings));
+            }
+            else
+            {
+                var password = await RequestPasswordAsync(
+                    "Установка сертификата в хранилище Windows",
+                    $"Сертификат «{item.Subject}» будет установлен в системное хранилище "
+                    + "(«Текущий пользователь → Личное»). Введите пароль, заданный при сохранении.",
+                    "⚠ ВНИМАНИЕ: после установки закрытый ключ станет доступен ВСЕМ программам, "
+                    + "работающим под вашей учётной записью Windows (браузеры, КриптоАРМ и др.), — "
+                    + "без ввода пароля этой программы. Ключ будет защищён средствами Windows. "
+                    + "Устанавливайте только на личном компьютере и удалите из хранилища, "
+                    + "когда перестанет быть нужен.",
+                    false);
+                if (password is null)
+                    return;
+
+                await Task.Run(() => _vault.InstallToStore(saved, password, _settings));
+            }
+
             RefreshCertificates();
             StatusText = $"Сертификат «{item.Subject}» установлен в хранилище Windows — "
                 + "теперь им можно подписывать и в других программах.";

@@ -113,6 +113,17 @@ public class CertificateVault
 
         using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
         store.Open(OpenFlags.ReadWrite);
+
+        // Если сертификат уже есть в хранилище (например, запись указывает на ключ
+        // токена), заменяем её — иначе Windows оставит старую привязку и подписание
+        // по-прежнему требовало бы токен.
+        var existing = store.Certificates.Find(X509FindType.FindByThumbprint, info.Thumbprint, validOnly: false);
+        foreach (var old in existing)
+        {
+            store.Remove(old);
+            old.Dispose();
+        }
+
         store.Add(certificate);
 
         if (!settings.InstalledInStore.Contains(info.Thumbprint, StringComparer.OrdinalIgnoreCase))

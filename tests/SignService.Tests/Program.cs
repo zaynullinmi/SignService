@@ -487,6 +487,23 @@ using (var store = new X509Store(StoreName.My, StoreLocation.CurrentUser))
 }
 Console.WriteLine("cert vault: install to system store → visible with key, signs+verifies: OK");
 
+// сертификат УЖЕ в хранилище (например, запись с токена) → установка заменяет
+// запись, а не дублирует и не оставляет старую привязку
+using (var preStore = new X509Store(StoreName.My, StoreLocation.CurrentUser))
+{
+    preStore.Open(OpenFlags.ReadWrite);
+    preStore.Add(new X509Certificate2(cert.RawData)); // «токенная» запись: без ключа
+}
+vault.InstallToStore(savedInfo, "test-пароль-123", vaultSettings);
+using (var store = new X509Store(StoreName.My, StoreLocation.CurrentUser))
+{
+    store.Open(OpenFlags.ReadOnly);
+    var entries = store.Certificates.Find(X509FindType.FindByThumbprint, savedInfo.Thumbprint, false);
+    if (entries.Count != 1) throw new Exception($"expected 1 store entry after reinstall, got {entries.Count}");
+    if (!entries[0].HasPrivateKey) throw new Exception("reinstalled entry must carry the PFX key");
+}
+Console.WriteLine("cert vault: install replaces existing store entry (key wins): OK");
+
 // удаление из хранилища: разрешено только для установленных программой
 vault.RemoveFromStore(savedInfo.Thumbprint, vaultSettings);
 if (CertificateVault.IsInStore(savedInfo.Thumbprint)) throw new Exception("cert must be removed from store");
