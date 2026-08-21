@@ -35,6 +35,29 @@ public partial class MainWindowViewModel : ObservableObject
 
         Files.CollectionChanged += (_, _) => SignAllCommand.NotifyCanExecuteChanged();
         RefreshCertificates();
+        _ = CheckUpdatesOnStartAsync();
+    }
+
+    /// <summary>Настройки приложения — для окна «О программе».</summary>
+    public AppSettings Settings => _settings;
+
+    // Тихая проверка обновлений при запуске: при наличии новой версии — строка
+    // в статусе/логе, никаких всплывающих окон.
+    private async Task CheckUpdatesOnStartAsync()
+    {
+        if (!_settings.CheckUpdatesOnStart)
+            return;
+
+        try
+        {
+            var update = await new UpdateService().CheckForUpdateAsync();
+            if (update is not null)
+                StatusText = $"Доступна новая версия {update.Version} — обновиться можно в окне «О программе».";
+        }
+        catch (Exception)
+        {
+            // нет сети или GitHub недоступен — не мешаем работе
+        }
     }
 
     public ObservableCollection<CertificateItem> Certificates { get; } = new();

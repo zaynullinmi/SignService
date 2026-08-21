@@ -576,6 +576,38 @@ catch (InvalidOperationException e) when (e.Message.Contains(".sig"))
     Console.WriteLine("build container without signatures → clear error: OK");
 }
 
+// ===== 15. Автообновление: разбор ответа GitHub Releases =====
+const string releaseJson = """
+    {
+      "tag_name": "v9.9.9",
+      "html_url": "https://github.com/zaynullinmi/SignService/releases/tag/v9.9.9",
+      "assets": [
+        { "name": "other.zip", "browser_download_url": "https://example.org/other.zip" },
+        { "name": "SignService.exe", "browser_download_url": "https://example.org/SignService.exe" }
+      ]
+    }
+    """;
+var upd = UpdateService.ParseLatestRelease(releaseJson, "1.0.0");
+if (upd is null || upd.Version != "9.9.9" || upd.ExeDownloadUrl != "https://example.org/SignService.exe"
+    || !upd.ReleasePageUrl.Contains("releases/tag"))
+    throw new Exception("update parse failed");
+if (UpdateService.ParseLatestRelease(releaseJson, "9.9.9") is not null)
+    throw new Exception("same version must not offer update");
+if (UpdateService.ParseLatestRelease(releaseJson, "10.0.0") is not null)
+    throw new Exception("newer local version must not offer update");
+if (UpdateService.ParseLatestRelease("""{ "tag_name": "not-a-version" }""", "1.0.0") is not null)
+    throw new Exception("bad tag must be ignored");
+if (!System.Text.RegularExpressions.Regex.IsMatch(UpdateService.CurrentVersion, @"^\d+\.\d+\.\d+$"))
+    throw new Exception("current version format wrong: " + UpdateService.CurrentVersion);
+Console.WriteLine($"update check: parse/compare OK (current {UpdateService.CurrentVersion})");
+
+// история версий встроена в сборку
+using (var changelog = typeof(DocumentSigner).Assembly.GetManifestResourceStream("SignService.CHANGELOG.md"))
+{
+    if (changelog is null || changelog.Length < 100) throw new Exception("embedded changelog missing");
+}
+Console.WriteLine("embedded changelog present: OK");
+
 try { Directory.Delete(tempRoot, true); } catch { }
 Console.WriteLine("ALL TESTS PASSED");
 return 0;

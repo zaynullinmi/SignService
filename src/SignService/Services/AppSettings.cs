@@ -50,6 +50,9 @@ public class AppSettings
     /// </summary>
     public List<string> InstalledInStore { get; set; } = new();
 
+    /// <summary>Проверять ли обновления при запуске программы.</summary>
+    public bool CheckUpdatesOnStart { get; set; } = true;
+
     public static AppSettings Load()
     {
         try

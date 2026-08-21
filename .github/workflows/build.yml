@@ -6,6 +6,9 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+permissions:
+  contents: write   # публикация GitHub Release на тег v*
+
 jobs:
   tests:
     name: Integration tests (Linux)
@@ -51,3 +54,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: publish/SignService.exe
+          body_path: CHANGELOG.md

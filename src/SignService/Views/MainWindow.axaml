@@ -235,14 +235,16 @@
         </Grid>
 
         <!-- Статусная строка -->
-        <Grid Grid.Row="6" ColumnDefinitions="*,Auto" Margin="0,10,0,0">
+        <Grid Grid.Row="6" ColumnDefinitions="*,Auto,Auto" Margin="0,10,0,0">
             <TextBlock Grid.Column="0" Text="{Binding StatusText}"
                        Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
                        TextTrimming="CharacterEllipsis"/>
-            <TextBlock Grid.Column="1" Margin="16,0,0,0"
+            <TextBlock Grid.Column="1" Margin="16,0,8,0" VerticalAlignment="Center"
                        Text="Автор: Зайнуллин Марат Илгамович — +7-963-694-2461, zaynullinmi@gmail.com"
                        ToolTip.Tip="https://github.com/zaynullinmi"
                        Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
+            <Button Grid.Column="2" Name="AboutButton" Padding="8,2" Content="О программе"
+                    ToolTip.Tip="Версия, автор, история версий и обновления"/>
         </Grid>
     </Grid>
 </Window>

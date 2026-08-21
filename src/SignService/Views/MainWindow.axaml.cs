@@ -19,6 +19,13 @@ public partial class MainWindow : Window
         AddHandler(DragDrop.DragLeaveEvent, OnDragLeave);
         AddHandler(DragDrop.DropEvent, OnDrop);
 
+        AboutButton.Click += async (_, _) =>
+        {
+            var settings = (DataContext as MainWindowViewModel)?.Settings
+                ?? SignService.Services.AppSettings.Load();
+            await new AboutDialog(settings).ShowDialog(this);
+        };
+
         DataContextChanged += (_, _) =>
         {
             if (DataContext is MainWindowViewModel vm)

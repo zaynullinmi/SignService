@@ -32,6 +32,8 @@
     <!-- Кириллический шрифт для штампа на PDF (DejaVu — свободная лицензия). -->
     <EmbeddedResource Include="Assets\Fonts\DejaVuSans.ttf" />
     <EmbeddedResource Include="Assets\Fonts\DejaVuSans-Bold.ttf" />
+    <!-- История версий для окна «О программе». -->
+    <EmbeddedResource Include="..\..\CHANGELOG.md" Link="CHANGELOG.md" LogicalName="SignService.CHANGELOG.md" />
   </ItemGroup>
 
 </Project>
