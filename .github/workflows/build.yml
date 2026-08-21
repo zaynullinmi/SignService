@@ -1,0 +1,64 @@
+name: Build
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Тег релиза (например v1.0.0); пусто — просто сборка"
+        required: false
+        default: ""
+
+permissions:
+  contents: write   # публикация GitHub Release на тег v*
+
+jobs:
+  tests:
+    name: Integration tests (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Run test suite
+        run: dotnet run --project tests/SignService.Tests -c Release
+
+  build-windows:
+    name: Windows x64 exe
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish self-contained single-file exe
+        run: >
+          dotnet publish src/SignService -c Release -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          -o publish
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SignService-win-x64
+          path: publish/SignService.exe
+          if-no-files-found: error
+
+      # Публикация GitHub Release: на тег v* либо по ручному запуску
+      # с указанным release_tag (тег создаётся на текущем коммите).
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          files: publish/SignService.exe
+          body_path: CHANGELOG.md

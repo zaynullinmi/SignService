@@ -1,0 +1,56 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="SignService.Views.AboutDialog"
+        Width="560" Height="560"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        Title="О программе">
+
+    <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,Auto,*,Auto">
+
+        <StackPanel Grid.Row="0" Spacing="2">
+            <TextBlock Text="SignService — подписание документов ЭЦП"
+                       FontSize="18" FontWeight="SemiBold"/>
+            <TextBlock Name="VersionText" Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Spacing="2" Margin="0,12,0,0">
+            <TextBlock Text="Автор: Зайнуллин Марат Илгамович" FontWeight="SemiBold"/>
+            <TextBlock Text="Телефон: +7-963-694-2461"/>
+            <TextBlock Text="E-mail: zaynullinmi@gmail.com"/>
+            <Button Name="ProjectLinkButton" Padding="0" Background="Transparent"
+                    ToolTip.Tip="Открыть страницу проекта в браузере">
+                <TextBlock Text="github.com/zaynullinmi/SignService"
+                           Foreground="{DynamicResource SystemAccentColor}"
+                           TextDecorations="Underline"/>
+            </Button>
+        </StackPanel>
+
+        <!-- Обновления -->
+        <Border Grid.Row="2" Margin="0,12,0,0" Padding="10" CornerRadius="6"
+                Background="{DynamicResource SystemControlBackgroundListLowBrush}">
+            <StackPanel Spacing="6">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Name="CheckUpdateButton" Content="Проверить обновления"/>
+                    <Button Name="InstallUpdateButton" Content="Скачать и установить"
+                            Classes="accent" IsVisible="False"/>
+                </StackPanel>
+                <TextBlock Name="UpdateStatusText" TextWrapping="Wrap"
+                           Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
+                <CheckBox Name="AutoCheckBox" Content="Проверять обновления при запуске"/>
+            </StackPanel>
+        </Border>
+
+        <TextBlock Grid.Row="3" Text="История версий" FontWeight="SemiBold" Margin="0,12,0,4"/>
+
+        <Border Grid.Row="4" BorderThickness="1" CornerRadius="6"
+                BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}">
+            <ScrollViewer Padding="10">
+                <SelectableTextBlock Name="ChangelogText" TextWrapping="Wrap" FontSize="12"/>
+            </ScrollViewer>
+        </Border>
+
+        <Button Grid.Row="5" Content="Закрыть" HorizontalAlignment="Right"
+                Margin="0,12,0,0" MinWidth="100" Name="CloseButton"/>
+    </Grid>
+</Window>

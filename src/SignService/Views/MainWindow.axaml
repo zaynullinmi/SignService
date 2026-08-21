@@ -1,0 +1,274 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SignService.ViewModels"
+        x:Class="SignService.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="SignService — подписание документов ЭЦП"
+        Width="860" Height="600"
+        MinWidth="640" MinHeight="480"
+        WindowStartupLocation="CenterScreen"
+        DragDrop.AllowDrop="True">
+
+    <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto">
+
+        <!-- Выбор сертификата -->
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto" Margin="0,0,0,8">
+            <TextBlock Grid.Column="0" Text="Сертификат:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <ComboBox Grid.Column="1"
+                      ItemsSource="{Binding Certificates}"
+                      SelectedItem="{Binding SelectedCertificate}"
+                      HorizontalAlignment="Stretch">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:CertificateItem">
+                        <TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis"/>
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+            <Button Grid.Column="2" Margin="8,0,0,0"
+                    Command="{Binding RefreshCertificatesCommand}"
+                    ToolTip.Tip="Обновить список сертификатов">
+                <TextBlock Text="⟳" FontSize="16"/>
+            </Button>
+            <Button Grid.Column="3" Margin="4,0,0,0"
+                    ToolTip.Tip="Сохранение сертификата на компьютер: только для этой программы (PFX с паролем) или в хранилище Windows — для всех программ. Программа предупредит о рисках.">
+                <TextBlock Text="💾" FontSize="14"/>
+                <Button.Flyout>
+                    <MenuFlyout>
+                        <MenuItem Header="Сохранить в программе (PFX с паролем)…"
+                                  Command="{Binding SaveCertificateCommand}"
+                                  ToolTip.Tip="Подписывать без ключа ЭЦП сможет только эта программа; при подписании запрашивается пароль."/>
+                        <MenuItem Header="Установить в хранилище Windows (для всех программ)…"
+                                  Command="{Binding InstallCertificateCommand}"
+                                  ToolTip.Tip="Копия закрытого ключа устанавливается в хранилище «Текущий пользователь → Личное»: подписывать смогут и другие программы (КриптоАРМ, браузер и т.д.) без токена. Для сертификата с токена ключ сначала сохраняется в программе (PFX с паролем)."/>
+                    </MenuFlyout>
+                </Button.Flyout>
+            </Button>
+            <Button Grid.Column="4" Margin="4,0,0,0"
+                    ToolTip.Tip="Удаление сохранённых копий сертификата. Токен не затрагивается.">
+                <TextBlock Text="🗑" FontSize="14"/>
+                <Button.Flyout>
+                    <MenuFlyout>
+                        <MenuItem Header="Удалить сохранённую копию из программы"
+                                  Command="{Binding DeleteCertificateCommand}"
+                                  ToolTip.Tip="PFX-файл с ключом затирается и удаляется."/>
+                        <MenuItem Header="Удалить из хранилища Windows"
+                                  Command="{Binding RemoveFromStoreCommand}"
+                                  ToolTip.Tip="Доступно только для сертификатов, которые установила эта программа."/>
+                    </MenuFlyout>
+                </Button.Flyout>
+            </Button>
+        </Grid>
+
+        <!-- Параметры подписи -->
+        <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
+            <RadioButton GroupName="SigMode" Margin="0,0,16,4"
+                         IsChecked="{Binding IsDetached}"
+                         Content="Откреплённая подпись (.sig рядом с файлом)"
+                         ToolTip.Tip="Файл .sig содержит только подпись. Такой формат требуют госпорталы и большинство систем документооборота."/>
+            <RadioButton GroupName="SigMode" Margin="0,0,16,4"
+                         IsChecked="{Binding !IsDetached}"
+                         Content="Прикреплённая (документ внутри .sig)"/>
+            <CheckBox Margin="0,0,16,4"
+                      IsChecked="{Binding MergeWithExisting}"
+                      Content="Объединять с существующей .sig"
+                      ToolTip.Tip="Соподписание: если рядом с документом уже есть .sig, ваша подпись добавится к имеющимся подписантам, а не заменит их. Подписи других лиц можно также приложить кнопкой «＋.sig» у файла."/>
+            <CheckBox Margin="0,0,0,4"
+                      IsChecked="{Binding IncludeExpiredCertificates}"
+                      Content="Показывать просроченные сертификаты"/>
+        </WrapPanel>
+
+        <!-- Штампы -->
+        <WrapPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
+            <CheckBox Margin="0,0,8,4"
+                      IsChecked="{Binding UseTimestamp}"
+                      Content="Штамп времени в подписи (CAdES-T)"
+                      ToolTip.Tip="Подпись с меткой доверенного времени от службы TSA (RFC 3161). Без галочки — обычная усиленная подпись CAdES-BES."/>
+            <TextBox Margin="0,0,16,4" Width="250" MaxHeight="30"
+                     Text="{Binding TsaUrl}"
+                     Watermark="Адрес TSA, например http://…/tsp"
+                     IsEnabled="{Binding UseTimestamp}"
+                     ToolTip.Tip="Адрес службы штампов времени (RFC 3161), например службы вашего УЦ"/>
+            <CheckBox Margin="0,0,8,4"
+                      IsChecked="{Binding UseStamp}"
+                      Content="Штамп на документ (PDF)"
+                      ToolTip.Tip="Рядом создаётся копия «имя (со штампом).pdf» с плашкой «Документ подписан электронной подписью». По умолчанию подписывается ОРИГИНАЛ, а копия — отдельный файл без подписи со всеми подписантами (безопасно при соподписании)."/>
+            <CheckBox Margin="0,0,8,4"
+                      IsChecked="{Binding StampWithDate}"
+                      IsEnabled="{Binding UseStamp}"
+                      Content="с датой подписания"/>
+            <CheckBox Margin="0,0,8,4"
+                      IsChecked="{Binding StampSignCopy}"
+                      IsEnabled="{Binding UseStamp}"
+                      Content="подписывать копию со штампом"
+                      ToolTip.Tip="⚠ Включайте, только если принимающая сторона требует подпись именно под документом со штампом. При соподписании этот режим опасен: штамп следующего подписанта изменит файл и сделает прежние подписи недействительными. Без галочки подписывается оригинал, а копия со штампом всех подписантов создаётся отдельно без подписи."/>
+            <Button Margin="0,0,4,4" Padding="8,3"
+                    Command="{Binding PickLogoCommand}"
+                    IsEnabled="{Binding UseStamp}"
+                    Content="Лого…"
+                    ToolTip.Tip="Картинка логотипа организации (PNG/JPEG) для штампа"/>
+            <TextBlock Margin="0,0,4,4" VerticalAlignment="Center"
+                       Text="{Binding StampLogoDisplay}"
+                       Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
+            <Button Margin="0,0,0,4" Padding="6,3"
+                    Command="{Binding ClearLogoCommand}"
+                    IsEnabled="{Binding UseStamp}"
+                    ToolTip.Tip="Убрать логотип">
+                <TextBlock Text="✕" FontSize="10"/>
+            </Button>
+        </WrapPanel>
+
+        <!-- Доверенность (МЧД) -->
+        <WrapPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock Text="Доверенность (МЧД):" VerticalAlignment="Center" Margin="0,0,8,4"/>
+            <Button Margin="0,0,8,4" Padding="8,3"
+                    Content="Добавить доверенность…"
+                    Command="{Binding AddPoaCommand}"
+                    ToolTip.Tip="Как в Контуре: выберите файл МЧД (XML) и подпись руководителя (.sig). Программа проверит подпись, срок действия и соответствие представителя вашему сертификату. Файлы МЧД будут скопированы рядом с подписанным документом, номер МЧД попадёт в штамп на PDF."/>
+            <TextBlock Margin="0,0,8,4" VerticalAlignment="Center"
+                       Text="{Binding PoaDisplay}"
+                       Foreground="{DynamicResource SystemAccentColor}"
+                       ToolTip.Tip="{Binding PoaDisplay}"/>
+            <Button Margin="0,0,0,4" Padding="6,3"
+                    Command="{Binding ClearPoaCommand}"
+                    IsVisible="{Binding HasPoa}"
+                    ToolTip.Tip="Убрать доверенность">
+                <TextBlock Text="✕" FontSize="10"/>
+            </Button>
+        </WrapPanel>
+
+        <!-- Зона перетаскивания / список файлов -->
+        <Border Grid.Row="4"
+                Name="DropZone"
+                BorderThickness="2"
+                BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+                CornerRadius="8"
+                Background="Transparent">
+            <Border.Styles>
+                <Style Selector="Border#DropZone.dragover">
+                    <Setter Property="BorderBrush" Value="{DynamicResource SystemAccentColor}"/>
+                    <Setter Property="Background" Value="#22808080"/>
+                </Style>
+            </Border.Styles>
+
+            <Panel>
+                <!-- Подсказка, когда файлов нет -->
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
+                            IsVisible="{Binding !Files.Count}">
+                    <TextBlock Text="📄" FontSize="48" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Перетащите файлы сюда"
+                               FontSize="18" HorizontalAlignment="Center"
+                               Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
+                    <TextBlock Text="или воспользуйтесь кнопкой «Обзор…»"
+                               HorizontalAlignment="Center"
+                               Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
+                </StackPanel>
+
+                <!-- Очередь файлов -->
+                <ScrollViewer IsVisible="{Binding Files.Count}">
+                    <ItemsControl ItemsSource="{Binding Files}" Margin="8">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:SignFileItem">
+                                <Border Margin="0,2" Padding="10,6" CornerRadius="6"
+                                        Background="{DynamicResource SystemControlBackgroundListLowBrush}">
+                                    <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
+                                        <StackPanel Grid.Column="0" Spacing="2">
+                                            <TextBlock Text="{Binding FileName}" FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Text="{Binding FilePath}" FontSize="11"
+                                                       Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1" Text="{Binding ExtraDisplay}"
+                                                   IsVisible="{Binding HasExtra}"
+                                                   VerticalAlignment="Center" Margin="8,0"
+                                                   Foreground="{DynamicResource SystemAccentColor}"
+                                                   ToolTip.Tip="Приложенные подписи других лиц будут объединены с вашей в один .sig"/>
+                                        <TextBlock Grid.Column="2" Text="{Binding SizeDisplay}"
+                                                   VerticalAlignment="Center" Margin="8,0"
+                                                   Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
+                                        <TextBlock Grid.Column="3" Text="{Binding StatusDisplay}"
+                                                   VerticalAlignment="Center" Margin="8,0"
+                                                   TextTrimming="CharacterEllipsis" MaxWidth="320"
+                                                   ToolTip.Tip="{Binding StatusDisplay}"/>
+                                        <Button Grid.Column="4" Margin="8,0,0,0" Padding="6,2"
+                                                Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).AttachSignaturesCommand}"
+                                                CommandParameter="{Binding}"
+                                                ToolTip.Tip="Приложить подписи других лиц (.sig) — они будут объединены с вашей в один файл">
+                                            <TextBlock Text="＋.sig"/>
+                                        </Button>
+                                        <Button Grid.Column="5" Margin="4,0,0,0" Padding="6,2"
+                                                Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).RemoveFileCommand}"
+                                                CommandParameter="{Binding}"
+                                                ToolTip.Tip="Убрать из списка">
+                                            <TextBlock Text="✕"/>
+                                        </Button>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Panel>
+        </Border>
+
+        <!-- Кнопки -->
+        <StackPanel Grid.Row="5" Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
+            <Button Content="Обзор…" Command="{Binding BrowseCommand}"/>
+            <Button Content="Инструменты ▾"
+                    ToolTip.Tip="Операции с подписями без подписания: извлечение, объединение, сборка контейнера, штамп">
+                <Button.Flyout>
+                    <MenuFlyout>
+                        <MenuItem Header="Извлечь из .sig… (документ и подписи из контейнера)"
+                                  Command="{Binding ExtractCommand}"/>
+                        <MenuItem Header="Объединить .sig… (несколько подписей в одну)"
+                                  Command="{Binding MergeFilesCommand}"/>
+                        <MenuItem Header="Собрать контейнер… (документ + подписи в один .sig)"
+                                  Command="{Binding BuildContainerCommand}"/>
+                        <MenuItem Header="Штамп на PDF… (копия со штампом без подписания)"
+                                  Command="{Binding StampOnlyCommand}"/>
+                    </MenuFlyout>
+                </Button.Flyout>
+            </Button>
+            <Button Content="Очистить список" Command="{Binding ClearCommand}"/>
+            <Button Content="Подписать"
+                    Command="{Binding SignAllCommand}"
+                    Classes="accent"
+                    HorizontalAlignment="Right"
+                    FontWeight="SemiBold"
+                    Padding="24,6"/>
+            <Button Content="Лог" Command="{Binding ToggleLogCommand}"
+                    ToolTip.Tip="Показать/скрыть окно лога операций"/>
+            <ProgressBar IsIndeterminate="True" Width="120"
+                         IsVisible="{Binding IsBusy}" VerticalAlignment="Center"/>
+        </StackPanel>
+
+        <!-- Окно лога -->
+        <Grid Grid.Row="6" RowDefinitions="Auto,Auto" Margin="0,8,0,0"
+              IsVisible="{Binding IsLogVisible}">
+            <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" Text="Лог операций" FontWeight="SemiBold"
+                           VerticalAlignment="Center"/>
+                <Button Grid.Column="1" Content="Очистить" Padding="8,2"
+                        Command="{Binding ClearLogCommand}"/>
+            </Grid>
+            <TextBox Grid.Row="1" Name="LogBox" Margin="0,4,0,0"
+                     Text="{Binding LogText, Mode=OneWay}"
+                     IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                     FontFamily="Consolas,Menlo,monospace" FontSize="11"
+                     Height="130"/>
+        </Grid>
+
+        <!-- Статусная строка -->
+        <Grid Grid.Row="7" ColumnDefinitions="*,Auto,Auto" Margin="0,10,0,0">
+            <TextBlock Grid.Column="0" Text="{Binding StatusText}"
+                       Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                       TextTrimming="CharacterEllipsis"/>
+            <TextBlock Grid.Column="1" Margin="16,0,8,0" VerticalAlignment="Center"
+                       Text="Автор: Зайнуллин Марат Илгамович — +7-963-694-2461, zaynullinmi@gmail.com"
+                       ToolTip.Tip="https://github.com/zaynullinmi"
+                       Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
+            <Button Grid.Column="2" Name="AboutButton" Padding="8,2" Content="О программе"
+                    ToolTip.Tip="Версия, автор, история версий и обновления"/>
+        </Grid>
+    </Grid>
+</Window>
