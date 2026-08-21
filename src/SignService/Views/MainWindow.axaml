@@ -9,7 +9,7 @@
         WindowStartupLocation="CenterScreen"
         DragDrop.AllowDrop="True">
 
-    <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto">
+    <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto">
 
         <!-- Выбор сертификата -->
         <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto" Margin="0,0,0,8">
@@ -112,8 +112,27 @@
             </Button>
         </WrapPanel>
 
+        <!-- Доверенность (МЧД) -->
+        <WrapPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock Text="Доверенность (МЧД):" VerticalAlignment="Center" Margin="0,0,8,4"/>
+            <Button Margin="0,0,8,4" Padding="8,3"
+                    Content="Добавить доверенность…"
+                    Command="{Binding AddPoaCommand}"
+                    ToolTip.Tip="Как в Контуре: выберите файл МЧД (XML) и подпись руководителя (.sig). Программа проверит подпись, срок действия и соответствие представителя вашему сертификату. Файлы МЧД будут скопированы рядом с подписанным документом, номер МЧД попадёт в штамп на PDF."/>
+            <TextBlock Margin="0,0,8,4" VerticalAlignment="Center"
+                       Text="{Binding PoaDisplay}"
+                       Foreground="{DynamicResource SystemAccentColor}"
+                       ToolTip.Tip="{Binding PoaDisplay}"/>
+            <Button Margin="0,0,0,4" Padding="6,3"
+                    Command="{Binding ClearPoaCommand}"
+                    IsVisible="{Binding HasPoa}"
+                    ToolTip.Tip="Убрать доверенность">
+                <TextBlock Text="✕" FontSize="10"/>
+            </Button>
+        </WrapPanel>
+
         <!-- Зона перетаскивания / список файлов -->
-        <Border Grid.Row="3"
+        <Border Grid.Row="4"
                 Name="DropZone"
                 BorderThickness="2"
                 BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
@@ -188,7 +207,7 @@
         </Border>
 
         <!-- Кнопки -->
-        <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
+        <StackPanel Grid.Row="5" Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
             <Button Content="Обзор…" Command="{Binding BrowseCommand}"/>
             <Button Content="Инструменты ▾"
                     ToolTip.Tip="Операции с подписями без подписания: извлечение, объединение, сборка контейнера, штамп">
@@ -219,7 +238,7 @@
         </StackPanel>
 
         <!-- Окно лога -->
-        <Grid Grid.Row="5" RowDefinitions="Auto,Auto" Margin="0,8,0,0"
+        <Grid Grid.Row="6" RowDefinitions="Auto,Auto" Margin="0,8,0,0"
               IsVisible="{Binding IsLogVisible}">
             <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
                 <TextBlock Grid.Column="0" Text="Лог операций" FontWeight="SemiBold"
@@ -235,7 +254,7 @@
         </Grid>
 
         <!-- Статусная строка -->
-        <Grid Grid.Row="6" ColumnDefinitions="*,Auto,Auto" Margin="0,10,0,0">
+        <Grid Grid.Row="7" ColumnDefinitions="*,Auto,Auto" Margin="0,10,0,0">
             <TextBlock Grid.Column="0" Text="{Binding StatusText}"
                        Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
                        TextTrimming="CharacterEllipsis"/>

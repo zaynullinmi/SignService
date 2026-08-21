@@ -60,6 +60,20 @@ is published on the [Releases](https://github.com/zaynullinmi/SignService/releas
   signatures into an attached `.sig` (the inverse of extraction);
 - **Stamp PDF…** — save a stamped copy of a document without signing.
 
+### Machine-readable power of attorney (MChD)
+
+- the "Add power of attorney…" button works like Kontur: pick the MChD XML
+  (EMCHD_1 format) and the head's signature (.sig; a neighbouring
+  `name.xml.sig` is picked up automatically);
+- the app verifies: the head's signature matches the MChD file (by hash,
+  Streebog for GOST), the validity period has not expired, and the
+  representative in the MChD matches the selected certificate by INN/SNILS;
+- when signing, the MChD files (XML + .sig) are copied next to the signed
+  document (the MChD is NOT embedded into the CMS signature — Kontur does
+  the same), and the visual PDF stamp gains a
+  "Acting under power of attorney No. …" line;
+- the power of attorney is remembered and re-validated on every signing.
+
 ### Visual stamp on PDF
 
 - a "DOCUMENT SIGNED WITH ELECTRONIC SIGNATURE" box on the last page:

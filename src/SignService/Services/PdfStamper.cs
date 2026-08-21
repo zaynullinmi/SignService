@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -36,7 +37,8 @@ public static class PdfStamper
         X509Certificate2 certificate,
         bool withDate,
         string? logoPath,
-        DateTime signTime)
+        DateTime signTime,
+        string? poaNumber = null)
     {
         var directory = Path.GetDirectoryName(pdfPath) ?? ".";
         var stem = Path.GetFileNameWithoutExtension(pdfPath);
@@ -46,7 +48,7 @@ public static class PdfStamper
         var page = document.Pages[document.Pages.Count - 1];
         using (var gfx = XGraphics.FromPdfPage(page))
         {
-            DrawStamp(gfx, page, certificate, withDate, logoPath, signTime);
+            DrawStamp(gfx, page, certificate, withDate, logoPath, signTime, poaNumber);
         }
 
         document.Save(outputPath);
@@ -55,7 +57,7 @@ public static class PdfStamper
 
     private static void DrawStamp(
         XGraphics gfx, PdfPage page, X509Certificate2 certificate,
-        bool withDate, string? logoPath, DateTime signTime)
+        bool withDate, string? logoPath, DateTime signTime, string? poaNumber)
     {
         const double width = 250;
         const double margin = 20;
@@ -66,19 +68,21 @@ public static class PdfStamper
 
         // Содержимое
         var owner = CertificateProvider.GetSubjectName(certificate);
-        var lines = new[]
+        var lines = new List<string>
         {
             $"Сертификат: {certificate.SerialNumber}",
             $"Владелец: {owner}",
             $"Действителен: с {certificate.NotBefore:dd.MM.yyyy} по {certificate.NotAfter:dd.MM.yyyy}",
         };
+        if (!string.IsNullOrWhiteSpace(poaNumber))
+            lines.Add($"Действует на основании МЧД № {poaNumber}");
         var dateLine = withDate ? $"Дата подписания: {signTime:dd.MM.yyyy HH:mm}" : null;
 
         const double pad = 8;
         const double lineHeight = 10.5;
         const double titleHeight = 24;
         var logoSize = logoPath is not null ? 34.0 : 0.0;
-        var bodyLines = lines.Length + (dateLine is null ? 0 : 1);
+        var bodyLines = lines.Count + (dateLine is null ? 0 : 1);
         var height = pad * 2 + Math.Max(titleHeight, logoSize) + 4 + bodyLines * lineHeight;
 
         var x = page.Width.Point - width - margin;

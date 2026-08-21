@@ -37,6 +37,7 @@ public partial class MainWindow : Window
                 vm.MergeFilesRequested += async (_, _) => await BrowseMergeFilesAsync(vm);
                 vm.StampOnlyRequested += async (_, _) => await BrowseStampOnlyAsync(vm);
                 vm.BuildContainerRequested += async (_, _) => await BrowseBuildContainerAsync(vm);
+                vm.AddPoaRequested += async (_, _) => await BrowsePoaAsync(vm);
                 vm.PropertyChanged += (_, args) =>
                 {
                     // автопрокрутка лога вниз
@@ -202,6 +203,46 @@ public partial class MainWindow : Window
             .Where(p => p is not null)
             .Select(p => p!)
             .ToList());
+    }
+
+    private async System.Threading.Tasks.Task BrowsePoaAsync(MainWindowViewModel vm)
+    {
+        var xmlFiles = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Файл машиночитаемой доверенности (МЧД) — XML",
+            AllowMultiple = false,
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("Доверенность МЧД (*.xml)") { Patterns = new[] { "*.xml" } },
+                FilePickerFileTypes.All,
+            },
+        });
+
+        var xmlPath = xmlFiles.FirstOrDefault()?.TryGetLocalPath();
+        if (xmlPath is null)
+            return;
+
+        // Подпись руководителя: «имя.xml.sig» рядом подхватывается автоматически.
+        var sigPath = xmlPath + ".sig";
+        if (!File.Exists(sigPath))
+        {
+            var sigFiles = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "Подпись руководителя для МЧД — SIG",
+                AllowMultiple = false,
+                FileTypeFilter = new[]
+                {
+                    new FilePickerFileType("Подпись (*.sig)") { Patterns = new[] { "*.sig" } },
+                    FilePickerFileTypes.All,
+                },
+            });
+
+            sigPath = sigFiles.FirstOrDefault()?.TryGetLocalPath();
+            if (sigPath is null)
+                return;
+        }
+
+        vm.SetPoa(xmlPath, sigPath);
     }
 
     private async System.Threading.Tasks.Task BrowseBuildContainerAsync(MainWindowViewModel vm)

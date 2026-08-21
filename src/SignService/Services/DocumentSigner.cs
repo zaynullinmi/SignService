@@ -45,6 +45,12 @@ public class DocumentSigner
 
         /// <summary>Путь к картинке логотипа для штампа (PNG/JPEG) или null.</summary>
         public string? StampLogoPath { get; init; }
+
+        /// <summary>
+        /// Доверенность МЧД: файлы XML и подписи руководителя копируются в каталог
+        /// подписанного документа (как это делает Контур), номер попадает в PDF-штамп.
+        /// </summary>
+        public PowerOfAttorneyService.PoaInfo? PowerOfAttorney { get; init; }
     }
 
     /// <summary>
@@ -104,7 +110,8 @@ public class DocumentSigner
             try
             {
                 targetPath = PdfStamper.CreateStampedCopy(
-                    filePath, certificate, options.StampWithDate, options.StampLogoPath, DateTime.Now);
+                    filePath, certificate, options.StampWithDate, options.StampLogoPath, DateTime.Now,
+                    options.PowerOfAttorney?.Number);
             }
             catch (Exception e)
             {
@@ -143,6 +150,10 @@ public class DocumentSigner
         if (inputs.Count == 1)
         {
             await File.WriteAllBytesAsync(signaturePath, own, cancellationToken);
+
+            if (options.PowerOfAttorney is { } poa)
+                PowerOfAttorneyService.CopyNextToDocument(poa, targetPath);
+
             return new SignFileResult(
                 targetPath, signaturePath, 1, Array.Empty<string>(), Array.Empty<string>());
         }
@@ -151,6 +162,10 @@ public class DocumentSigner
         // документа исключаются — иначе портал отклонит весь контейнер.
         var merged = CmsMerger.MergeForDocument(inputs, data);
         await File.WriteAllBytesAsync(signaturePath, merged.Signature, cancellationToken);
+
+        if (options.PowerOfAttorney is { } poaMerged)
+            PowerOfAttorneyService.CopyNextToDocument(poaMerged, targetPath);
+
         return new SignFileResult(
             targetPath, signaturePath, merged.SignerCount, merged.ExcludedSigners, merged.UnverifiedSigners);
     }

@@ -35,6 +35,12 @@ public partial class MainWindowViewModel : ObservableObject
 
         Files.CollectionChanged += (_, _) => SignAllCommand.NotifyCanExecuteChanged();
         RefreshCertificates();
+
+        // Восстанавливаем ранее добавленную МЧД (с повторной проверкой).
+        if (_settings.PoaXmlPath is { } poaXml && _settings.PoaSigPath is { } poaSig
+            && System.IO.File.Exists(poaXml) && System.IO.File.Exists(poaSig))
+            SetPoa(poaXml, poaSig, quiet: true);
+
         _ = CheckUpdatesOnStartAsync();
     }
 
@@ -111,6 +117,21 @@ public partial class MainWindowViewModel : ObservableObject
 
     /// <summary>Запрос диалога выбора картинки логотипа для штампа.</summary>
     public event EventHandler? PickLogoRequested;
+
+    /// <summary>Доверенность МЧД, приложенная к подписанию (null — без доверенности).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PoaDisplay))]
+    [NotifyPropertyChangedFor(nameof(HasPoa))]
+    private PowerOfAttorneyService.PoaInfo? _poa;
+
+    public bool HasPoa => Poa is not null;
+
+    public string PoaDisplay => Poa is null
+        ? "доверенность не добавлена"
+        : $"МЧД № {Poa.Number}" + (Poa.ValidTo is { } v ? $" до {v:dd.MM.yyyy}" : "");
+
+    /// <summary>Запрос диалогов выбора файлов МЧД (XML и подписи руководителя).</summary>
+    public event EventHandler? AddPoaRequested;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(SignAllCommand))]
@@ -252,6 +273,62 @@ public partial class MainWindowViewModel : ObservableObject
 
     [RelayCommand]
     private void ClearLogo() => StampLogoPath = null;
+
+    [RelayCommand(CanExecute = nameof(CanBrowse))]
+    private void AddPoa() => AddPoaRequested?.Invoke(this, EventArgs.Empty);
+
+    [RelayCommand]
+    private void ClearPoa()
+    {
+        Poa = null;
+        _settings.PoaXmlPath = null;
+        _settings.PoaSigPath = null;
+        _settings.Save();
+        StatusText = "Доверенность (МЧД) убрана — подписание пойдёт без неё.";
+    }
+
+    /// <summary>
+    /// Загружает и проверяет доверенность МЧД (как Контур: XML + подпись
+    /// руководителя, проверка подписи, срока и соответствия представителя
+    /// выбранному сертификату).
+    /// </summary>
+    public void SetPoa(string xmlPath, string sigPath, bool quiet = false)
+    {
+        try
+        {
+            var info = PowerOfAttorneyService.Parse(xmlPath, sigPath);
+            var check = PowerOfAttorneyService.Validate(info, SelectedCertificate?.Certificate);
+
+            if (check.State == PowerOfAttorneyService.CheckState.Error)
+            {
+                Poa = null;
+                StatusText = "Доверенность НЕ добавлена: " + check.Message;
+                return;
+            }
+
+            Poa = info;
+            _settings.PoaXmlPath = xmlPath;
+            _settings.PoaSigPath = sigPath;
+            _settings.Save();
+
+            var summary = $"Добавлена МЧД № {info.Number}"
+                + (info.ValidTo is { } v ? $" (до {v:dd.MM.yyyy})" : "")
+                + $", доверитель: {info.PrincipalOrg}, представитель: {info.RepresentativeName}. "
+                + check.Message;
+            if (check.State == PowerOfAttorneyService.CheckState.Warning)
+                summary = "⚠ " + summary;
+            if (!quiet)
+                StatusText = summary;
+            else
+                Log(summary);
+        }
+        catch (Exception ex)
+        {
+            Poa = null;
+            if (!quiet)
+                StatusText = "Не удалось загрузить МЧД: " + ex.Message;
+        }
+    }
 
     [RelayCommand]
     private void RefreshCertificates()
@@ -634,7 +711,7 @@ public partial class MainWindowViewModel : ObservableObject
                     }
 
                     var stamped = await Task.Run(() => PdfStamper.CreateStampedCopy(
-                        path, item.Certificate, StampWithDate, StampLogoPath, DateTime.Now));
+                        path, item.Certificate, StampWithDate, StampLogoPath, DateTime.Now, Poa?.Number));
                     lines.Add($"«{System.IO.Path.GetFileName(path)}» → «{System.IO.Path.GetFileName(stamped)}»");
                 }
                 catch (Exception ex)
@@ -759,6 +836,19 @@ public partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        // Перед подписанием с МЧД перепроверяем её против фактического сертификата.
+        if (Poa is { } poaCheck)
+        {
+            var check = PowerOfAttorneyService.Validate(poaCheck, certificate);
+            if (check.State == PowerOfAttorneyService.CheckState.Error)
+            {
+                StatusText = "Подписание остановлено — проблема с МЧД: " + check.Message;
+                return;
+            }
+            if (check.State == PowerOfAttorneyService.CheckState.Warning)
+                Log("⚠ МЧД: " + check.Message);
+        }
+
         IsBusy = true;
 
         var signed = 0;
@@ -785,6 +875,7 @@ public partial class MainWindowViewModel : ObservableObject
                         Stamp = UseStamp,
                         StampWithDate = StampWithDate,
                         StampLogoPath = StampLogoPath,
+                        PowerOfAttorney = Poa,
                     };
                     var result = await Task.Run(
                         () => _documentSigner.SignFileAsync(file.FilePath, certificate, options));

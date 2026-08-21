@@ -608,6 +608,94 @@ using (var changelog = typeof(DocumentSigner).Assembly.GetManifestResourceStream
 }
 Console.WriteLine("embedded changelog present: OK");
 
+// ===== 16. Доверенность МЧД (EMCHD_1) =====
+var poaDir = Path.Combine(tempRoot, "poa");
+Directory.CreateDirectory(poaDir);
+var poaXmlPath = Path.Combine(poaDir, "ON_EMCHD_test.xml");
+var poaValidTo = DateTime.Today.AddMonths(6).ToString("yyyy-MM-dd");
+await File.WriteAllTextAsync(poaXmlPath, $"""
+    <?xml version="1.0" encoding="UTF-8"?>
+    <Доверенность xmlns="urn://x-artefacts/EMCHD_1" ВерсФорм="EMCHD_1">
+      <Документ><Довер>
+        <СвДов СрокДейст="{poaValidTo}" ДатаВыдДовер="2026-07-09" НомДовер="b24f0fb1-3ee0-4b50-bb84-da89832ac7c2"/>
+        <СвДоверит ТипДоверит="1"><Доверит><РосОргДовер>
+          <СвРосОрг ОГРН="1262300003151" ИННЮЛ="2301119162" НаимОрг="ООО ВЕКТОР"/>
+          <ЛицоБезДов><СвФЛ Должность="Директор" СНИЛС="999-999-999 99" ИННФЛ="999999999999">
+            <СведФЛ><ФИО Фамилия="Директоров" Имя="Директор"/></СведФЛ></СвФЛ></ЛицоБезДов>
+        </РосОргДовер></Доверит></СвДоверит>
+        <СвУпПред ТипПред="3"><Пред><СведФизЛ СНИЛС="143-507-282 43" ИННФЛ="771378577706">
+          <СведФЛ ДатаРожд="1987-03-23"><ФИО Фамилия="Зайнуллин" Имя="Марат" Отчество="Илгамович"/></СведФЛ>
+        </СведФизЛ></Пред></СвУпПред>
+      </Довер></Документ>
+    </Доверенность>
+    """);
+var poaXmlBytes = await File.ReadAllBytesAsync(poaXmlPath);
+var poaSigPath = poaXmlPath + ".sig";
+using var headCert = MakeCert("Директоров Директор");
+await File.WriteAllBytesAsync(poaSigPath, signer.Sign(poaXmlBytes, headCert, detached: true));
+
+var poaInfo = PowerOfAttorneyService.Parse(poaXmlPath, poaSigPath);
+if (poaInfo.Number != "b24f0fb1-3ee0-4b50-bb84-da89832ac7c2") throw new Exception("poa number wrong");
+if (poaInfo.PrincipalInn != "2301119162" || !poaInfo.PrincipalOrg.Contains("ВЕКТОР")) throw new Exception("principal wrong");
+if (poaInfo.RepresentativeName != "Зайнуллин Марат Илгамович") throw new Exception("representative wrong");
+Console.WriteLine("POA parse (EMCHD_1): number, principal, representative: OK");
+
+// сертификат представителя с ИНН/СНИЛС в subject
+X509Certificate2 MakeRepCert(string inn, string snils)
+{
+    using var key = RSA.Create(2048);
+    var dn = new X500DistinguishedName(
+        $"CN=Зайнуллин Марат Илгамович, OID.1.2.643.3.131.1.1={inn}, OID.1.2.643.100.3={snils}");
+    var req = new CertificateRequest(dn, key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+    return req.CreateSelfSigned(DateTimeOffset.Now.AddDays(-1), DateTimeOffset.Now.AddYears(1));
+}
+
+using var repCert = MakeRepCert("771378577706", "14350728243");
+using var strangerCert = MakeRepCert("111111111111", "11111111111");
+
+var okCheck = PowerOfAttorneyService.Validate(poaInfo, repCert);
+if (okCheck.State != PowerOfAttorneyService.CheckState.Ok) throw new Exception("poa validate must pass: " + okCheck.Message);
+var strangerCheck = PowerOfAttorneyService.Validate(poaInfo, strangerCert);
+if (strangerCheck.State != PowerOfAttorneyService.CheckState.Error) throw new Exception("stranger cert must fail");
+Console.WriteLine("POA validate: representative match / mismatch by INN+SNILS: OK");
+
+// подпись руководителя не соответствует XML → ошибка
+var tamperedSigPath = Path.Combine(poaDir, "tampered.sig");
+await File.WriteAllBytesAsync(tamperedSigPath, sigB); // подпись другого файла
+var tamperedInfo = PowerOfAttorneyService.Parse(poaXmlPath, tamperedSigPath);
+if (PowerOfAttorneyService.Validate(tamperedInfo, repCert).State != PowerOfAttorneyService.CheckState.Error)
+    throw new Exception("tampered poa sig must fail");
+Console.WriteLine("POA validate: head signature over different file rejected: OK");
+
+// истёкшая МЧД → ошибка
+var expiredXmlPath = Path.Combine(poaDir, "expired.xml");
+await File.WriteAllTextAsync(expiredXmlPath,
+    (await File.ReadAllTextAsync(poaXmlPath)).Replace($"СрокДейст=\"{poaValidTo}\"", "СрокДейст=\"2020-01-01\""));
+var expiredSigPath = expiredXmlPath + ".sig";
+await File.WriteAllBytesAsync(expiredSigPath, signer.Sign(await File.ReadAllBytesAsync(expiredXmlPath), headCert, detached: true));
+if (PowerOfAttorneyService.Validate(PowerOfAttorneyService.Parse(expiredXmlPath, expiredSigPath), repCert).State
+    != PowerOfAttorneyService.CheckState.Error)
+    throw new Exception("expired poa must fail");
+Console.WriteLine("POA validate: expired rejected: OK");
+
+// подписание с МЧД: файлы доверенности копируются рядом с документом
+var poaDocDir = Path.Combine(tempRoot, "poa_doc");
+Directory.CreateDirectory(poaDocDir);
+var poaDoc = Path.Combine(poaDocDir, "заявление.bin");
+await File.WriteAllBytesAsync(poaDoc, payload);
+var poaSignResult = await signer.SignFileAsync(poaDoc, repCert, new DocumentSigner.SignOptions
+{
+    Detached = true,
+    PowerOfAttorney = poaInfo,
+});
+if (!File.Exists(Path.Combine(poaDocDir, "ON_EMCHD_test.xml"))
+    || !File.Exists(Path.Combine(poaDocDir, "ON_EMCHD_test.xml.sig")))
+    throw new Exception("poa files must be copied next to signed document");
+var poaCms = new SignedCms(new ContentInfo(payload), detached: true);
+poaCms.Decode(await File.ReadAllBytesAsync(poaSignResult.SignaturePath));
+poaCms.CheckSignature(verifySignatureOnly: true);
+Console.WriteLine("sign with POA: signature valid, EMCHD xml+sig copied next to document: OK");
+
 try { Directory.Delete(tempRoot, true); } catch { }
 Console.WriteLine("ALL TESTS PASSED");
 return 0;

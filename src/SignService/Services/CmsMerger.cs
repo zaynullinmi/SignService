@@ -453,6 +453,39 @@ internal static class CmsMerger
         }
     }
 
+    /// <summary>Итог сверки подписи с документом.</summary>
+    public enum DocMatch
+    {
+        Match,
+        Mismatch,
+        Unknown,
+    }
+
+    /// <summary>
+    /// Сверяет подпись с документом по messageDigest всех подписантов
+    /// (для ГОСТ — Стрибогом, без криптопровайдера). Mismatch — хотя бы один
+    /// подписант подписал другой файл; Match — все совпали; Unknown — проверить нечем.
+    /// </summary>
+    public static DocMatch CheckAgainstDocument(byte[] signature, byte[] document)
+    {
+        var parsed = Parse(Normalize(signature));
+        var cache = new Dictionary<string, byte[]?>();
+        var anyMatch = false;
+        foreach (var (_, der) in parsed.Signers)
+        {
+            switch (CheckSignerAgainstDocument(der, document, cache))
+            {
+                case SignerDocMatch.Mismatch:
+                    return DocMatch.Mismatch;
+                case SignerDocMatch.Match:
+                    anyMatch = true;
+                    break;
+            }
+        }
+
+        return anyMatch ? DocMatch.Match : DocMatch.Unknown;
+    }
+
     private enum SignerDocMatch
     {
         Match,

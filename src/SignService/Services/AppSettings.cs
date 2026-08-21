@@ -53,6 +53,12 @@ public class AppSettings
     /// <summary>Проверять ли обновления при запуске программы.</summary>
     public bool CheckUpdatesOnStart { get; set; } = true;
 
+    /// <summary>Путь к XML машиночитаемой доверенности (МЧД).</summary>
+    public string? PoaXmlPath { get; set; }
+
+    /// <summary>Путь к подписи руководителя (.sig) для МЧД.</summary>
+    public string? PoaSigPath { get; set; }
+
     public static AppSettings Load()
     {
         try
