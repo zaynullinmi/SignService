@@ -338,6 +338,33 @@ internal static class CmsMerger
         return elements;
     }
 
+    /// <summary>
+    /// Упаковывает документ внутрь подписи: из откреплённой подписи (или контейнера)
+    /// получается прикреплённый криптоконтейнер с этим документом и всеми подписантами.
+    /// Обратная операция к <see cref="ConvertToDetached"/>. Подписи не создаются
+    /// и не меняются — только encapContentInfo.
+    /// </summary>
+    public static byte[] AttachContent(byte[] signature, byte[] document)
+    {
+        var parsed = Parse(Normalize(signature));
+
+        // Тип содержимого сохраняем из исходной подписи (обычно id-data).
+        var encap = new AsnReader(parsed.EncapContentInfo, AsnEncodingRules.BER).ReadSequence();
+        var contentType = encap.ReadObjectIdentifier();
+
+        var writer = new AsnWriter(AsnEncodingRules.DER);
+        using (writer.PushSequence())                      // EncapsulatedContentInfo
+        {
+            writer.WriteObjectIdentifier(contentType);
+            using (writer.PushSequence(new Asn1Tag(TagClass.ContextSpecific, 0))) // [0] EXPLICIT
+                writer.WriteOctetString(document);
+        }
+
+        parsed.EncapContentInfo = writer.Encode();
+        parsed.HasContent = true;
+        return BuildMerged(new List<ParsedSignedData> { parsed });
+    }
+
     // EncapContentInfo без eContent: SEQUENCE { eContentType } — для откреплённой подписи.
     private static byte[] StripContent(byte[] encapContentInfo)
     {

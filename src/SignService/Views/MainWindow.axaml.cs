@@ -28,6 +28,19 @@ public partial class MainWindow : Window
                 vm.ExtractRequested += async (_, _) => await BrowseContainersAsync(vm);
                 vm.PickLogoRequested += async (_, _) => await BrowseLogoAsync(vm);
                 vm.MergeFilesRequested += async (_, _) => await BrowseMergeFilesAsync(vm);
+                vm.StampOnlyRequested += async (_, _) => await BrowseStampOnlyAsync(vm);
+                vm.BuildContainerRequested += async (_, _) => await BrowseBuildContainerAsync(vm);
+                vm.PropertyChanged += (_, args) =>
+                {
+                    // автопрокрутка лога вниз
+                    if (args.PropertyName == nameof(MainWindowViewModel.LogText))
+                        LogBox.CaretIndex = int.MaxValue;
+                };
+                vm.RequestPasswordAsync = async (title, message, warning, confirm) =>
+                    await new PasswordDialog(message, warning, confirm) { Title = title }
+                        .ShowDialog<string?>(this);
+                vm.RequestConfirmAsync = async (title, message) =>
+                    await new ConfirmDialog(title, message).ShowDialog<bool>(this);
             }
         };
     }
@@ -163,6 +176,64 @@ public partial class MainWindow : Window
             .Where(p => p is not null)
             .Select(p => p!)
             .ToList());
+    }
+
+    private async System.Threading.Tasks.Task BrowseStampOnlyAsync(MainWindowViewModel vm)
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "PDF-документы для штампа (без подписания)",
+            AllowMultiple = true,
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("Документы PDF (*.pdf)") { Patterns = new[] { "*.pdf" } },
+            },
+        });
+
+        await vm.StampWithoutSigningAsync(files
+            .Select(f => f.TryGetLocalPath())
+            .Where(p => p is not null)
+            .Select(p => p!)
+            .ToList());
+    }
+
+    private async System.Threading.Tasks.Task BrowseBuildContainerAsync(MainWindowViewModel vm)
+    {
+        var docs = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Документ для сборки криптоконтейнера",
+            AllowMultiple = false,
+        });
+
+        var documentPath = docs.FirstOrDefault()?.TryGetLocalPath();
+        if (documentPath is null)
+            return;
+
+        // Подписи: «документ.sig» рядом, иначе — выбрать вручную.
+        IReadOnlyList<string>? signaturePaths = null;
+        if (!File.Exists(documentPath + ".sig"))
+        {
+            var sigs = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = $"Подписи для контейнера — {Path.GetFileName(documentPath)}",
+                AllowMultiple = true,
+                FileTypeFilter = new[]
+                {
+                    new FilePickerFileType("Подписи CMS (*.sig, *.p7s)") { Patterns = new[] { "*.sig", "*.p7s" } },
+                    FilePickerFileTypes.All,
+                },
+            });
+
+            signaturePaths = sigs
+                .Select(f => f.TryGetLocalPath())
+                .Where(p => p is not null)
+                .Select(p => p!)
+                .ToList();
+            if (signaturePaths.Count == 0)
+                return;
+        }
+
+        await vm.BuildContainerAsync(documentPath, signaturePaths);
     }
 
     private async System.Threading.Tasks.Task BrowseContainersAsync(MainWindowViewModel vm)

@@ -9,10 +9,10 @@
         WindowStartupLocation="CenterScreen"
         DragDrop.AllowDrop="True">
 
-    <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,*,Auto,Auto">
+    <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto">
 
         <!-- Выбор сертификата -->
-        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,8">
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto" Margin="0,0,0,8">
             <TextBlock Grid.Column="0" Text="Сертификат:" VerticalAlignment="Center" Margin="0,0,8,0"/>
             <ComboBox Grid.Column="1"
                       ItemsSource="{Binding Certificates}"
@@ -28,6 +28,16 @@
                     Command="{Binding RefreshCertificatesCommand}"
                     ToolTip.Tip="Обновить список сертификатов">
                 <TextBlock Text="⟳" FontSize="16"/>
+            </Button>
+            <Button Grid.Column="3" Margin="4,0,0,0"
+                    Command="{Binding SaveCertificateCommand}"
+                    ToolTip.Tip="Сохранить сертификат с закрытым ключом на этот компьютер (PFX с паролем), чтобы подписывать без подключённого ключа ЭЦП. ВНИМАНИЕ: это снижает безопасность — программа предупредит и попросит задать пароль.">
+                <TextBlock Text="💾" FontSize="14"/>
+            </Button>
+            <Button Grid.Column="4" Margin="4,0,0,0"
+                    Command="{Binding DeleteCertificateCommand}"
+                    ToolTip.Tip="Удалить сохранённую на компьютере копию сертификата (файл с ключом затирается). Токен и системное хранилище не затрагиваются.">
+                <TextBlock Text="🗑" FontSize="14"/>
             </Button>
         </Grid>
 
@@ -162,10 +172,21 @@
         <!-- Кнопки -->
         <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
             <Button Content="Обзор…" Command="{Binding BrowseCommand}"/>
-            <Button Content="Извлечь из .sig…" Command="{Binding ExtractCommand}"
-                    ToolTip.Tip="Извлечь из криптоконтейнера: документ из прикреплённой подписи, откреплённую подпись и отдельные подписи по каждому подписанту. Файлы создаются рядом с контейнером."/>
-            <Button Content="Объединить .sig…" Command="{Binding MergeFilesCommand}"
-                    ToolTip.Tip="Объединить несколько файлов подписей в один без подписания. Принимаются откреплённые .sig и прикреплённые криптоконтейнеры; если среди них есть контейнер с документом, результат тоже будет контейнером. Соответствие подписей проверяется по документу из контейнера или по файлу рядом с .sig."/>
+            <Button Content="Инструменты ▾"
+                    ToolTip.Tip="Операции с подписями без подписания: извлечение, объединение, сборка контейнера, штамп">
+                <Button.Flyout>
+                    <MenuFlyout>
+                        <MenuItem Header="Извлечь из .sig… (документ и подписи из контейнера)"
+                                  Command="{Binding ExtractCommand}"/>
+                        <MenuItem Header="Объединить .sig… (несколько подписей в одну)"
+                                  Command="{Binding MergeFilesCommand}"/>
+                        <MenuItem Header="Собрать контейнер… (документ + подписи в один .sig)"
+                                  Command="{Binding BuildContainerCommand}"/>
+                        <MenuItem Header="Штамп на PDF… (копия со штампом без подписания)"
+                                  Command="{Binding StampOnlyCommand}"/>
+                    </MenuFlyout>
+                </Button.Flyout>
+            </Button>
             <Button Content="Очистить список" Command="{Binding ClearCommand}"/>
             <Button Content="Подписать"
                     Command="{Binding SignAllCommand}"
@@ -173,12 +194,30 @@
                     HorizontalAlignment="Right"
                     FontWeight="SemiBold"
                     Padding="24,6"/>
+            <Button Content="Лог" Command="{Binding ToggleLogCommand}"
+                    ToolTip.Tip="Показать/скрыть окно лога операций"/>
             <ProgressBar IsIndeterminate="True" Width="120"
                          IsVisible="{Binding IsBusy}" VerticalAlignment="Center"/>
         </StackPanel>
 
+        <!-- Окно лога -->
+        <Grid Grid.Row="5" RowDefinitions="Auto,Auto" Margin="0,8,0,0"
+              IsVisible="{Binding IsLogVisible}">
+            <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" Text="Лог операций" FontWeight="SemiBold"
+                           VerticalAlignment="Center"/>
+                <Button Grid.Column="1" Content="Очистить" Padding="8,2"
+                        Command="{Binding ClearLogCommand}"/>
+            </Grid>
+            <TextBox Grid.Row="1" Name="LogBox" Margin="0,4,0,0"
+                     Text="{Binding LogText, Mode=OneWay}"
+                     IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                     FontFamily="Consolas,Menlo,monospace" FontSize="11"
+                     Height="130"/>
+        </Grid>
+
         <!-- Статусная строка -->
-        <Grid Grid.Row="5" ColumnDefinitions="*,Auto" Margin="0,10,0,0">
+        <Grid Grid.Row="6" ColumnDefinitions="*,Auto" Margin="0,10,0,0">
             <TextBlock Grid.Column="0" Text="{Binding StatusText}"
                        Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
                        TextTrimming="CharacterEllipsis"/>

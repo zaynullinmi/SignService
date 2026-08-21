@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
@@ -39,6 +40,9 @@ public class AppSettings
 
     /// <summary>Путь к логотипу организации для штампа (PNG/JPEG).</summary>
     public string? StampLogoPath { get; set; }
+
+    /// <summary>Сертификаты, сохранённые на этот компьютер (PFX в папке приложения).</summary>
+    public List<SavedCertificateInfo> SavedCertificates { get; set; } = new();
 
     public static AppSettings Load()
     {

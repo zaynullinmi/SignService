@@ -431,6 +431,102 @@ catch (ArgumentException)
     Console.WriteLine("merge w/o signing: <2 files → clear error: OK");
 }
 
+// ===== 13. Хранилище сертификатов на компьютере (PFX с паролем) =====
+var vault = new CertificateVault();
+var vaultSettings = new AppSettings(); // пишет в реальный %AppData% — тестовые записи чистим ниже
+
+var savedInfo = vault.Save(cert, "test-пароль-123", vaultSettings);
+if (savedInfo.Thumbprint != cert.Thumbprint || savedInfo.Subject != "Тестовый Пользователь")
+    throw new Exception("saved info wrong");
+if (vault.List(vaultSettings).Count == 0) throw new Exception("saved cert not listed");
+
+// открытая часть доступна без пароля и без закрытого ключа
+using (var pub = CertificateVault.PublicPart(savedInfo))
+{
+    if (pub.HasPrivateKey) throw new Exception("public part must not contain private key");
+    if (pub.Thumbprint != cert.Thumbprint) throw new Exception("public part thumbprint mismatch");
+}
+
+// загрузка по паролю возвращает рабочий ключ — подписываем и проверяем
+using (var loaded = vault.Load(savedInfo, "test-пароль-123"))
+{
+    if (!loaded.HasPrivateKey) throw new Exception("loaded cert must have private key");
+    var sigLoaded = signer.Sign(payload, loaded, detached: true);
+    var cmsLoaded = new SignedCms(new ContentInfo(payload), detached: true);
+    cmsLoaded.Decode(sigLoaded);
+    cmsLoaded.CheckSignature(verifySignatureOnly: true);
+}
+Console.WriteLine("cert vault: save → load by password → sign+verify: OK");
+
+// неверный пароль — понятная ошибка
+try
+{
+    vault.Load(savedInfo, "wrong");
+    throw new Exception("wrong password must fail");
+}
+catch (InvalidOperationException e) when (e.Message.Contains("пароль"))
+{
+    Console.WriteLine("cert vault: wrong password → clear error: OK");
+}
+
+// удаление: файл затёрт и удалён, запись убрана
+var pfxPath = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+    "SignService", "certificates", savedInfo.FileName);
+if (!File.Exists(pfxPath)) throw new Exception("pfx file missing before delete");
+vault.Delete(savedInfo, vaultSettings);
+if (File.Exists(pfxPath)) throw new Exception("pfx file must be deleted");
+if (vault.List(vaultSettings).Any(c => c.Thumbprint == savedInfo.Thumbprint))
+    throw new Exception("saved record must be removed");
+Console.WriteLine("cert vault: delete wipes file and record: OK");
+
+// ===== 14. Сборка криптоконтейнера без подписания =====
+var bDir = Path.Combine(tempRoot, "build_container");
+Directory.CreateDirectory(bDir);
+var bDoc = Path.Combine(bDir, "решение.pdf");
+await File.WriteAllBytesAsync(bDoc, payload);
+await File.WriteAllBytesAsync(bDoc + ".sig", Merge(sigA, sigB, sigStale)); // рядом: 2 валидные + протухшая
+
+var built = CmsExtractor.BuildContainer(bDoc);
+if (built.SignerCount != 2 || built.ExcludedSigners.Count != 1)
+    throw new Exception($"build container: {built.SignerCount} signers, excluded {built.ExcludedSigners.Count}");
+if (Path.GetFileName(built.OutputPath) != "решение.pdf (контейнер).sig")
+    throw new Exception("container name wrong: " + built.OutputPath);
+var cmsBuilt = new SignedCms();
+cmsBuilt.Decode(await File.ReadAllBytesAsync(built.OutputPath));
+cmsBuilt.CheckSignature(verifySignatureOnly: true);
+if (!cmsBuilt.ContentInfo.Content.AsSpan().SequenceEqual(payload))
+    throw new Exception("container must embed the document");
+Console.WriteLine("build container (doc + .sig nearby): attached, doc embedded, 2 signers verify, stale excluded: OK");
+
+// контейнер → извлечение → документ совпадает (обратимость)
+var rt = CmsExtractor.ExtractToFiles(built.OutputPath);
+if (rt.DocumentPath is null || !(await File.ReadAllBytesAsync(rt.DocumentPath)).SequenceEqual(payload))
+    throw new Exception("container extraction roundtrip failed");
+Console.WriteLine("build container ↔ extract roundtrip: OK");
+
+// подписи, выбранные вручную (без .sig рядом)
+var bDoc2 = Path.Combine(bDir, "письмо.txt");
+await File.WriteAllBytesAsync(bDoc2, payload);
+var manualSig = Path.Combine(bDir, "письмо-подпись.sig");
+await File.WriteAllBytesAsync(manualSig, sigC);
+var built2 = CmsExtractor.BuildContainer(bDoc2, new[] { manualSig });
+if (built2.SignerCount != 1) throw new Exception("manual-sig container failed");
+Console.WriteLine("build container (manual signatures): OK");
+
+// нет подписей вообще — понятная ошибка
+var bDoc3 = Path.Combine(bDir, "одинокий.txt");
+await File.WriteAllBytesAsync(bDoc3, payload);
+try
+{
+    CmsExtractor.BuildContainer(bDoc3);
+    throw new Exception("no signatures must fail");
+}
+catch (InvalidOperationException e) when (e.Message.Contains(".sig"))
+{
+    Console.WriteLine("build container without signatures → clear error: OK");
+}
+
 try { Directory.Delete(tempRoot, true); } catch { }
 Console.WriteLine("ALL TESTS PASSED");
 return 0;

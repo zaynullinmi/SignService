@@ -108,6 +108,47 @@ public static class CmsExtractor
             outputPath, info.SignerNames.Count, info.HasContent, documentNote, excluded, unverified);
     }
 
+    /// <summary>Результат сборки криптоконтейнера из документа и подписей.</summary>
+    public sealed record BuildContainerResult(
+        string OutputPath,
+        int SignerCount,
+        IReadOnlyList<string> ExcludedSigners,
+        IReadOnlyList<string> UnverifiedSigners);
+
+    /// <summary>
+    /// Собирает прикреплённый криптоконтейнер: документ упаковывается внутрь CMS
+    /// вместе с имеющимися подписями (своя подпись НЕ создаётся). Подписи берутся
+    /// из переданных файлов, а при пустом списке — из «документ.sig» рядом.
+    /// Подписи проверяются по документу; несоответствующие исключаются.
+    /// Результат — «имя (контейнер).sig» рядом с документом.
+    /// </summary>
+    public static BuildContainerResult BuildContainer(
+        string documentPath, IReadOnlyList<string>? signaturePaths = null)
+    {
+        var document = File.ReadAllBytes(documentPath);
+
+        var paths = signaturePaths is { Count: > 0 }
+            ? signaturePaths
+            : File.Exists(documentPath + ".sig")
+                ? new[] { documentPath + ".sig" }
+                : throw new InvalidOperationException(
+                    $"Рядом с документом нет файла «{Path.GetFileName(documentPath)}.sig» — выберите подписи вручную.");
+
+        var inputs = paths.Select(File.ReadAllBytes).ToList();
+        var merged = CmsMerger.MergeForDocument(inputs, document);
+        var container = CmsMerger.AttachContent(merged.Signature, document);
+
+        var directory = Path.GetDirectoryName(documentPath) ?? ".";
+        var outputPath = UniquePath(
+            directory,
+            Path.GetFileName(documentPath) + " (контейнер).sig",
+            paths.Append(documentPath).ToList());
+        File.WriteAllBytes(outputPath, container);
+
+        return new BuildContainerResult(
+            outputPath, merged.SignerCount, merged.ExcludedSigners, merged.UnverifiedSigners);
+    }
+
     public static ExtractionResult ExtractToFiles(string containerPath)
     {
         var raw = File.ReadAllBytes(containerPath);
