@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>SignService.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SignService\SignService.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="streebog_vectors.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

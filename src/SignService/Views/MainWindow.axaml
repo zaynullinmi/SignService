@@ -164,6 +164,8 @@
             <Button Content="Обзор…" Command="{Binding BrowseCommand}"/>
             <Button Content="Извлечь из .sig…" Command="{Binding ExtractCommand}"
                     ToolTip.Tip="Извлечь из криптоконтейнера: документ из прикреплённой подписи, откреплённую подпись и отдельные подписи по каждому подписанту. Файлы создаются рядом с контейнером."/>
+            <Button Content="Объединить .sig…" Command="{Binding MergeFilesCommand}"
+                    ToolTip.Tip="Объединить несколько файлов подписей в один без подписания. Принимаются откреплённые .sig и прикреплённые криптоконтейнеры; если среди них есть контейнер с документом, результат тоже будет контейнером. Соответствие подписей проверяется по документу из контейнера или по файлу рядом с .sig."/>
             <Button Content="Очистить список" Command="{Binding ClearCommand}"/>
             <Button Content="Подписать"
                     Command="{Binding SignAllCommand}"

@@ -7,6 +7,19 @@ on:
   workflow_dispatch:
 
 jobs:
+  tests:
+    name: Integration tests (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Run test suite
+        run: dotnet run --project tests/SignService.Tests -c Release
+
   build-windows:
     name: Windows x64 exe
     runs-on: windows-latest

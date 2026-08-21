@@ -104,6 +104,9 @@ public partial class MainWindowViewModel : ObservableObject
     /// <summary>Запрос диалога выбора контейнеров для извлечения.</summary>
     public event EventHandler? ExtractRequested;
 
+    /// <summary>Запрос диалога выбора подписей для объединения без подписания.</summary>
+    public event EventHandler? MergeFilesRequested;
+
     partial void OnIncludeExpiredCertificatesChanged(bool value) => RefreshCertificates();
 
     // Как в ReportGGE: выбор запоминается, следующий запуск подписывает тем же
@@ -253,6 +256,42 @@ public partial class MainWindowViewModel : ObservableObject
 
     [RelayCommand(CanExecute = nameof(CanBrowse))]
     private void Extract() => ExtractRequested?.Invoke(this, EventArgs.Empty);
+
+    [RelayCommand(CanExecute = nameof(CanBrowse))]
+    private void MergeFiles() => MergeFilesRequested?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>Объединяет выбранные файлы подписей в один — без создания своей подписи.</summary>
+    public async Task MergeSignatureFilesAsync(IReadOnlyList<string> paths)
+    {
+        if (paths.Count == 0)
+            return;
+
+        IsBusy = true;
+        try
+        {
+            var r = await Task.Run(() => CmsExtractor.MergeSignatureFiles(paths));
+            var parts = new List<string>
+            {
+                $"подписантов: {r.SignerCount}",
+                r.AttachedOutput ? "прикреплённая (документ внутри)" : "откреплённая",
+                r.DocumentNote,
+            };
+            if (r.ExcludedSigners.Count > 0)
+                parts.Add("исключены не соответствующие документу: " + string.Join("; ", r.ExcludedSigners));
+            if (r.UnverifiedSigners.Count > 0)
+                parts.Add("не удалось проверить: " + string.Join("; ", r.UnverifiedSigners));
+
+            StatusText = $"Объединено → «{System.IO.Path.GetFileName(r.OutputPath)}»: {string.Join(", ", parts)}";
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Объединение не выполнено: " + ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
 
     /// <summary>Извлекает содержимое выбранных контейнеров в файлы рядом с ними.</summary>
     public async Task ExtractContainersAsync(IReadOnlyList<string> containerPaths)
