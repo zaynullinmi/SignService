@@ -40,6 +40,15 @@ public class DocumentSigner
         /// <summary>Ставить ли визуальный штамп о подписании на PDF-документ.</summary>
         public bool Stamp { get; init; }
 
+        /// <summary>
+        /// true — подписывается копия со штампом (штамп до подписи; подпись
+        /// действует именно на штампованный файл). false (по умолчанию) —
+        /// подписывается ОРИГИНАЛ, а копия со штампом всех подписантов создаётся
+        /// отдельно БЕЗ подписи: безопасно при соподписании — штамп не ломает
+        /// подписи других подписантов.
+        /// </summary>
+        public bool StampSignCopy { get; init; }
+
         /// <summary>Включать ли дату подписания в визуальный штамп.</summary>
         public bool StampWithDate { get; init; } = true;
 
@@ -54,17 +63,18 @@ public class DocumentSigner
     }
 
     /// <summary>
-    /// Результат подписания файла: подписанный документ (для PDF со штампом — путь
-    /// к штампованной копии), путь к .sig, число подписантов в нём, исключённые при
-    /// объединении подписи (не соответствуют документу) и подписи, которые
-    /// проверить было нечем (сохранены как есть).
+    /// Результат подписания файла: подписанный документ (в режиме «подписывать
+    /// копию со штампом» — путь к ней), путь к .sig, число подписантов,
+    /// исключённые при объединении подписи, не проверенные подписи и путь
+    /// к штампованной копии БЕЗ подписи (режим «копия отдельно»).
     /// </summary>
     public readonly record struct SignFileResult(
         string SignedDocumentPath,
         string SignaturePath,
         int SignerCount,
         IReadOnlyList<string> ExcludedSigners,
-        IReadOnlyList<string> UnverifiedSigners);
+        IReadOnlyList<string> UnverifiedSigners,
+        string? StampedCopyPath = null);
 
     private readonly TimestampClient _timestampClient = new();
 
@@ -102,10 +112,13 @@ public class DocumentSigner
         SignOptions options,
         CancellationToken cancellationToken = default)
     {
-        // Визуальный штамп меняет содержимое PDF, поэтому копия со штампом
-        // создаётся ДО подписания и подписывается именно она.
+        // Режим «подписывать копию со штампом»: штамп меняет содержимое PDF,
+        // поэтому копия создаётся ДО подписания и подписывается именно она.
+        // В режиме «копия отдельно» подписывается ОРИГИНАЛ, а штампованная копия
+        // (без подписи, со всеми подписантами) создаётся ниже, после подписания.
         var targetPath = filePath;
-        if (options.Stamp && PdfStamper.IsPdf(filePath))
+        var stampAsCopy = options.Stamp && !options.StampSignCopy && PdfStamper.IsPdf(filePath);
+        if (options.Stamp && options.StampSignCopy && PdfStamper.IsPdf(filePath))
         {
             try
             {
@@ -147,27 +160,57 @@ public class DocumentSigner
             inputs.Add(await File.ReadAllBytesAsync(path, cancellationToken));
         inputs.Add(own); // своя — последней: при совпадении подписанта она побеждает
 
+        int signerCount;
+        IReadOnlyList<string> excluded;
+        IReadOnlyList<string> unverified;
         if (inputs.Count == 1)
         {
             await File.WriteAllBytesAsync(signaturePath, own, cancellationToken);
-
-            if (options.PowerOfAttorney is { } poa)
-                PowerOfAttorneyService.CopyNextToDocument(poa, targetPath);
-
-            return new SignFileResult(
-                targetPath, signaturePath, 1, Array.Empty<string>(), Array.Empty<string>());
+            signerCount = 1;
+            excluded = Array.Empty<string>();
+            unverified = Array.Empty<string>();
+        }
+        else
+        {
+            // Объединение с проверкой: подписи под другим файлом или прежней версией
+            // документа исключаются — иначе портал отклонит весь контейнер.
+            var merged = CmsMerger.MergeForDocument(inputs, data);
+            await File.WriteAllBytesAsync(signaturePath, merged.Signature, cancellationToken);
+            signerCount = merged.SignerCount;
+            excluded = merged.ExcludedSigners;
+            unverified = merged.UnverifiedSigners;
         }
 
-        // Объединение с проверкой: подписи под другим файлом или прежней версией
-        // документа исключаются — иначе портал отклонит весь контейнер.
-        var merged = CmsMerger.MergeForDocument(inputs, data);
-        await File.WriteAllBytesAsync(signaturePath, merged.Signature, cancellationToken);
+        if (options.PowerOfAttorney is { } poa)
+            PowerOfAttorneyService.CopyNextToDocument(poa, targetPath);
 
-        if (options.PowerOfAttorney is { } poaMerged)
-            PowerOfAttorneyService.CopyNextToDocument(poaMerged, targetPath);
+        // Режим «копия отдельно»: штампованная копия БЕЗ подписи, со всеми
+        // подписантами итогового .sig — пересоздаётся после каждого подписания.
+        string? stampedCopyPath = null;
+        if (stampAsCopy)
+        {
+            try
+            {
+                var signerCerts = CmsMerger.GetSignerCertificates(
+                    await File.ReadAllBytesAsync(signaturePath, cancellationToken));
+                var stampCerts = signerCerts.Count > 0
+                    ? signerCerts
+                    : new List<X509Certificate2> { certificate };
+                stampedCopyPath = PdfStamper.CreateStampedCopy(
+                    filePath, stampCerts, options.StampWithDate, options.StampLogoPath, DateTime.Now,
+                    options.PowerOfAttorney?.Number);
+                foreach (var c in signerCerts)
+                    c.Dispose();
+            }
+            catch (Exception e)
+            {
+                throw new InvalidOperationException(
+                    $"Документ подписан, но не удалось создать копию со штампом ({e.Message}).", e);
+            }
+        }
 
         return new SignFileResult(
-            targetPath, signaturePath, merged.SignerCount, merged.ExcludedSigners, merged.UnverifiedSigners);
+            targetPath, signaturePath, signerCount, excluded, unverified, stampedCopyPath);
     }
 
     /// <summary>

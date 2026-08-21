@@ -39,7 +39,24 @@ public static class PdfStamper
         string? logoPath,
         DateTime signTime,
         string? poaNumber = null)
+        => CreateStampedCopy(pdfPath, new[] { certificate }, withDate, logoPath, signTime, poaNumber);
+
+    /// <summary>
+    /// Штампованная копия с несколькими подписантами (по блоку данных на каждого) —
+    /// используется в режиме «копия отдельно», когда штамп отражает всех
+    /// подписантов итоговой подписи.
+    /// </summary>
+    public static string CreateStampedCopy(
+        string pdfPath,
+        IReadOnlyList<X509Certificate2> certificates,
+        bool withDate,
+        string? logoPath,
+        DateTime signTime,
+        string? poaNumber = null)
     {
+        if (certificates.Count == 0)
+            throw new ArgumentException("Нет сертификатов для штампа.", nameof(certificates));
+
         var directory = Path.GetDirectoryName(pdfPath) ?? ".";
         var stem = Path.GetFileNameWithoutExtension(pdfPath);
         var outputPath = Path.Combine(directory, $"{stem} (со штампом).pdf");
@@ -48,7 +65,7 @@ public static class PdfStamper
         var page = document.Pages[document.Pages.Count - 1];
         using (var gfx = XGraphics.FromPdfPage(page))
         {
-            DrawStamp(gfx, page, certificate, withDate, logoPath, signTime, poaNumber);
+            DrawStamp(gfx, page, certificates, withDate, logoPath, signTime, poaNumber);
         }
 
         document.Save(outputPath);
@@ -56,7 +73,7 @@ public static class PdfStamper
     }
 
     private static void DrawStamp(
-        XGraphics gfx, PdfPage page, X509Certificate2 certificate,
+        XGraphics gfx, PdfPage page, IReadOnlyList<X509Certificate2> certificates,
         bool withDate, string? logoPath, DateTime signTime, string? poaNumber)
     {
         const double width = 250;
@@ -66,14 +83,18 @@ public static class PdfStamper
         var titleFont = new XFont("stamp", 8, XFontStyleEx.Bold);
         var textFont = new XFont("stamp", 7, XFontStyleEx.Regular);
 
-        // Содержимое
-        var owner = CertificateProvider.GetSubjectName(certificate);
-        var lines = new List<string>
+        // Содержимое: блок на каждого подписанта, затем общие строки
+        var lines = new List<string>();
+        for (var i = 0; i < certificates.Count; i++)
         {
-            $"Сертификат: {certificate.SerialNumber}",
-            $"Владелец: {owner}",
-            $"Действителен: с {certificate.NotBefore:dd.MM.yyyy} по {certificate.NotAfter:dd.MM.yyyy}",
-        };
+            var c = certificates[i];
+            if (certificates.Count > 1)
+                lines.Add($"Подписант {i + 1}:");
+            lines.Add($"Сертификат: {c.SerialNumber}");
+            lines.Add($"Владелец: {CertificateProvider.GetSubjectName(c)}");
+            lines.Add($"Действителен: с {c.NotBefore:dd.MM.yyyy} по {c.NotAfter:dd.MM.yyyy}");
+        }
+
         if (!string.IsNullOrWhiteSpace(poaNumber))
             lines.Add($"Действует на основании МЧД № {poaNumber}");
         var dateLine = withDate ? $"Дата подписания: {signTime:dd.MM.yyyy HH:mm}" : null;

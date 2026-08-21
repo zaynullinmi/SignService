@@ -79,8 +79,12 @@ is published on the [Releases](https://github.com/zaynullinmi/SignService/releas
 - a "DOCUMENT SIGNED WITH ELECTRONIC SIGNATURE" box on the last page:
   certificate number, owner, validity period, optionally the signing date and
   an **organization logo** (PNG/JPEG);
-- the stamped copy `name (stamped).pdf` is created **before** signing and is
-  the file that gets signed; the original is left untouched.
+- by default the **original** file is signed, and the stamped copy
+  `name (stamped).pdf` is a separate **unsigned** file recreated after every
+  signing with **all signers** of the resulting signature (safe for
+  co-signing — the stamp never invalidates other signatures);
+- a separate checkbox enables the "sign the stamped copy" mode (stamp before
+  signing) for recipients that require the signature over the stamped file.
 
 ### Certificates
 

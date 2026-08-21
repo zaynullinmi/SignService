@@ -330,10 +330,12 @@ var logoPath = Path.Combine(pdfDir, "logo.png");
     await File.WriteAllBytesAsync(logoPath, png.ToArray());
 }
 
+// режим «подписывать копию со штампом» (StampSignCopy=true — прежнее поведение)
 var stampResult = await signer.SignFileAsync(pdfPath, cert, new DocumentSigner.SignOptions
 {
     Detached = true,
     Stamp = true,
+    StampSignCopy = true,
     StampWithDate = true,
     StampLogoPath = logoPath,
 });
@@ -347,7 +349,48 @@ var stampedBytes = await File.ReadAllBytesAsync(stampedPath);
 var cmsStamp = new SignedCms(new ContentInfo(stampedBytes), detached: true);
 cmsStamp.Decode(await File.ReadAllBytesAsync(stampResult.SignaturePath));
 cmsStamp.CheckSignature(verifySignatureOnly: true);
-Console.WriteLine("PDF stamp: stamped copy created, signature verifies over stamped bytes: OK");
+Console.WriteLine("PDF stamp (sign-copy mode): stamped copy signed, verifies over stamped bytes: OK");
+
+// режим по умолчанию «копия отдельно»: подписывается ОРИГИНАЛ, копия без подписи,
+// при соподписании штамп отражает всех подписантов и не ломает подписи
+var origBytes = await File.ReadAllBytesAsync(pdfPath);
+File.Delete(pdfPath + ".sig");
+File.Delete(stampedPath);
+var sep1 = await signer.SignFileAsync(pdfPath, cert, new DocumentSigner.SignOptions
+{
+    Detached = true, Stamp = true, StampWithDate = true, StampLogoPath = logoPath,
+});
+if (sep1.SignedDocumentPath != pdfPath || sep1.SignaturePath != pdfPath + ".sig")
+    throw new Exception("separate mode must sign the ORIGINAL");
+if (sep1.StampedCopyPath is null || !File.Exists(sep1.StampedCopyPath))
+    throw new Exception("separate mode must produce stamped copy");
+if (!origBytes.SequenceEqual(await File.ReadAllBytesAsync(pdfPath)))
+    throw new Exception("original must not change");
+var copySize1 = new FileInfo(sep1.StampedCopyPath).Length;
+
+// соподписание вторым сертификатом — подписи остаются валидными, копия пересоздана
+var sep2 = await signer.SignFileAsync(pdfPath, certB, new DocumentSigner.SignOptions
+{
+    Detached = true, MergeWithExisting = true, Stamp = true, StampWithDate = true, StampLogoPath = logoPath,
+});
+if (sep2.SignerCount != 2) throw new Exception("co-sign in separate mode failed");
+var cmsSep = new SignedCms(new ContentInfo(origBytes), detached: true);
+cmsSep.Decode(await File.ReadAllBytesAsync(sep2.SignaturePath));
+if (cmsSep.SignerInfos.Count != 2) throw new Exception("expected 2 signers over original");
+cmsSep.CheckSignature(verifySignatureOnly: true); // обе подписи валидны против оригинала
+var copySize2 = new FileInfo(sep2.StampedCopyPath!).Length;
+if (copySize2 <= copySize1) throw new Exception("stamped copy must be recreated with 2 signer blocks");
+Console.WriteLine("PDF stamp (separate mode): original signed by 2 signers (both valid), unsigned stamped copy lists all signers: OK");
+
+// GetSignerCertificates: сертификаты обоих подписантов по порядку
+var signerCerts = mergerType.GetMethod("GetSignerCertificates")!
+    .Invoke(null, new object[] { await File.ReadAllBytesAsync(sep2.SignaturePath) })
+    as IReadOnlyList<X509Certificate2> ?? throw new Exception("GetSignerCertificates failed");
+if (signerCerts.Count != 2) throw new Exception("expected 2 signer certificates");
+if (!signerCerts.Any(c => c.Thumbprint == cert.Thumbprint) || !signerCerts.Any(c => c.Thumbprint == certB.Thumbprint))
+    throw new Exception("signer certificates mismatch");
+foreach (var c in signerCerts) c.Dispose();
+Console.WriteLine("GetSignerCertificates: both signer certs resolved: OK");
 
 var res2 = await signer.SignFileAsync(pdfPath, cert, new DocumentSigner.SignOptions
 {

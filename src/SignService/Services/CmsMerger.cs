@@ -250,6 +250,45 @@ internal static class CmsMerger
         return result;
     }
 
+    /// <summary>
+    /// Сертификаты подписантов (в порядке SignerInfos): для каждого подписанта —
+    /// вложенный в контейнер сертификат, сопоставленный по SignerIdentifier.
+    /// Подписанты без вложенного сертификата пропускаются.
+    /// </summary>
+    public static IReadOnlyList<X509Certificate2> GetSignerCertificates(byte[] signature)
+    {
+        var parsed = Parse(Normalize(signature));
+
+        var byKey = new Dictionary<string, byte[]>();
+        foreach (var blob in parsed.Certificates)
+        {
+            try
+            {
+                using var cert = new X509Certificate2(blob);
+                var writer = new AsnWriter(AsnEncodingRules.DER);
+                using (writer.PushSequence())
+                {
+                    writer.WriteEncodedValue(cert.IssuerName.RawData);
+                    writer.WriteInteger(cert.SerialNumberBytes.Span);
+                }
+
+                byKey[Convert.ToHexString(writer.Encode())] = blob;
+            }
+            catch (Exception e) when (e is CryptographicException or AsnContentException)
+            {
+            }
+        }
+
+        var result = new List<X509Certificate2>();
+        foreach (var (sidKey, _) in parsed.Signers)
+        {
+            if (byKey.TryGetValue(sidKey, out var blob))
+                result.Add(new X509Certificate2(blob));
+        }
+
+        return result;
+    }
+
     /// <summary>Значение подписи (поле signature из SignerInfo) первого подписанта.</summary>
     public static byte[] GetSignatureValue(byte[] signature)
     {

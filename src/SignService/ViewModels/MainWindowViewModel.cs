@@ -30,6 +30,7 @@ public partial class MainWindowViewModel : ObservableObject
         TsaUrl = _settings.TsaUrl;
         UseStamp = _settings.UseStamp;
         StampWithDate = _settings.StampWithDate;
+        StampSignCopy = _settings.StampSignCopy;
         StampLogoPath = _settings.StampLogoPath;
         _initializing = false;
 
@@ -106,6 +107,14 @@ public partial class MainWindowViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _stampWithDate = true;
+
+    /// <summary>
+    /// true — подписывать копию со штампом (как раньше); false — подписывать
+    /// оригинал, а копию со штампом всех подписантов сохранять отдельно без
+    /// подписи (безопасно при соподписании).
+    /// </summary>
+    [ObservableProperty]
+    private bool _stampSignCopy;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(StampLogoDisplay))]
@@ -258,6 +267,13 @@ public partial class MainWindowViewModel : ObservableObject
     {
         if (_initializing) return;
         _settings.StampWithDate = value;
+        _settings.Save();
+    }
+
+    partial void OnStampSignCopyChanged(bool value)
+    {
+        if (_initializing) return;
+        _settings.StampSignCopy = value;
         _settings.Save();
     }
 
@@ -873,6 +889,7 @@ public partial class MainWindowViewModel : ObservableObject
                         Timestamp = UseTimestamp,
                         TsaUrl = TsaUrl,
                         Stamp = UseStamp,
+                        StampSignCopy = StampSignCopy,
                         StampWithDate = StampWithDate,
                         StampLogoPath = StampLogoPath,
                         PowerOfAttorney = Poa,
@@ -894,6 +911,9 @@ public partial class MainWindowViewModel : ObservableObject
                     signed++;
                     Log($"  [OK] {file.FileName} → {System.IO.Path.GetFileName(result.SignaturePath)}"
                         + (result.SignerCount > 1 ? $" (подписантов: {result.SignerCount})" : "")
+                        + (result.StampedCopyPath is null
+                            ? ""
+                            : $"; копия со штампом (без подписи): {System.IO.Path.GetFileName(result.StampedCopyPath)}")
                         + (file.Message is null ? "" : $". {file.Message}"));
                 }
                 catch (Exception ex)

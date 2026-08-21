@@ -38,6 +38,13 @@ public class AppSettings
     /// <summary>Включать дату подписания в визуальный штамп.</summary>
     public bool StampWithDate { get; set; } = true;
 
+    /// <summary>
+    /// true — подписывать копию со штампом (штамп до подписи);
+    /// false — подписывать оригинал, копия со штампом отдельно, без подписи
+    /// (безопасно при нескольких подписантах).
+    /// </summary>
+    public bool StampSignCopy { get; set; }
+
     /// <summary>Путь к логотипу организации для штампа (PNG/JPEG).</summary>
     public string? StampLogoPath { get; set; }
 
