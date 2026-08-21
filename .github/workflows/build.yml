@@ -5,6 +5,11 @@ on:
     branches: ["main", "claude/**"]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Тег релиза (например v1.0.0); пусто — просто сборка"
+        required: false
+        default: ""
 
 permissions:
   contents: write   # публикация GitHub Release на тег v*
@@ -48,10 +53,12 @@ jobs:
           path: publish/SignService.exe
           if-no-files-found: error
 
-      # На тег v* дополнительно публикуем exe в GitHub Release
+      # Публикация GitHub Release: на тег v* либо по ручному запуску
+      # с указанным release_tag (тег создаётся на текущем коммите).
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
           files: publish/SignService.exe
           body_path: CHANGELOG.md
