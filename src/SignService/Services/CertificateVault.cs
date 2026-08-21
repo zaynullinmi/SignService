@@ -99,6 +99,77 @@ public class CertificateVault
         }
     }
 
+    /// <summary>
+    /// Устанавливает сохранённый сертификат с закрытым ключом в системное хранилище
+    /// Windows («Текущий пользователь → Личное») — после этого им могут подписывать
+    /// ЛЮБЫЕ программы под этой учётной записью (КриптоАРМ, браузер и т.д.),
+    /// без пароля этой программы. Интерфейс обязан предупреждать об этом.
+    /// </summary>
+    public void InstallToStore(SavedCertificateInfo info, string password, AppSettings settings)
+    {
+        // PersistKeySet: без него Windows удалит закрытый ключ при освобождении
+        // объекта, и в хранилище остался бы сертификат без ключа.
+        using var certificate = LoadForStore(info, password);
+
+        using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
+        store.Open(OpenFlags.ReadWrite);
+        store.Add(certificate);
+
+        if (!settings.InstalledInStore.Contains(info.Thumbprint, StringComparer.OrdinalIgnoreCase))
+        {
+            settings.InstalledInStore.Add(info.Thumbprint);
+            settings.Save();
+        }
+    }
+
+    /// <summary>Есть ли сертификат с таким отпечатком в системном хранилище.</summary>
+    public static bool IsInStore(string thumbprint)
+    {
+        using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
+        store.Open(OpenFlags.ReadOnly);
+        return store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, validOnly: false).Count > 0;
+    }
+
+    /// <summary>
+    /// Удаляет сертификат из системного хранилища Windows. Программа разрешает
+    /// удалять только сертификаты, которые сама туда установила
+    /// (список в настройках) — чужие записи хранилища не трогаются.
+    /// </summary>
+    public void RemoveFromStore(string thumbprint, AppSettings settings)
+    {
+        if (!settings.InstalledInStore.Contains(thumbprint, StringComparer.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                "Этот сертификат не был установлен в хранилище данной программой — "
+                + "удалите его через системную оснастку управления сертификатами.");
+
+        using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
+        store.Open(OpenFlags.ReadWrite);
+        var found = store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, validOnly: false);
+        foreach (var certificate in found)
+        {
+            store.Remove(certificate);
+            certificate.Dispose();
+        }
+
+        settings.InstalledInStore.RemoveAll(t => string.Equals(t, thumbprint, StringComparison.OrdinalIgnoreCase));
+        settings.Save();
+    }
+
+    /// <summary>Загрузка PFX с флагами для установки в хранилище (ключ сохраняется).</summary>
+    private X509Certificate2 LoadForStore(SavedCertificateInfo info, string password)
+    {
+        var path = Path.Combine(VaultDir, info.FileName);
+        try
+        {
+            return new X509Certificate2(path, password,
+                X509KeyStorageFlags.PersistKeySet | X509KeyStorageFlags.UserKeySet | X509KeyStorageFlags.Exportable);
+        }
+        catch (CryptographicException e)
+        {
+            throw new InvalidOperationException("Неверный пароль сохранённого сертификата.", e);
+        }
+    }
+
     /// <summary>Удаляет сохранённый сертификат с компьютера (PFX-файл и запись).</summary>
     public void Delete(SavedCertificateInfo info, AppSettings settings)
     {

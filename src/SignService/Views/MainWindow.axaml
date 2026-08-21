@@ -30,14 +30,32 @@
                 <TextBlock Text="⟳" FontSize="16"/>
             </Button>
             <Button Grid.Column="3" Margin="4,0,0,0"
-                    Command="{Binding SaveCertificateCommand}"
-                    ToolTip.Tip="Сохранить сертификат с закрытым ключом на этот компьютер (PFX с паролем), чтобы подписывать без подключённого ключа ЭЦП. ВНИМАНИЕ: это снижает безопасность — программа предупредит и попросит задать пароль.">
+                    ToolTip.Tip="Сохранение сертификата на компьютер: только для этой программы (PFX с паролем) или в хранилище Windows — для всех программ. Программа предупредит о рисках.">
                 <TextBlock Text="💾" FontSize="14"/>
+                <Button.Flyout>
+                    <MenuFlyout>
+                        <MenuItem Header="Сохранить в программе (PFX с паролем)…"
+                                  Command="{Binding SaveCertificateCommand}"
+                                  ToolTip.Tip="Подписывать без ключа ЭЦП сможет только эта программа; при подписании запрашивается пароль."/>
+                        <MenuItem Header="Установить в хранилище Windows (для всех программ)…"
+                                  Command="{Binding InstallCertificateCommand}"
+                                  ToolTip.Tip="Доступно для сертификата, сохранённого в программе (🔒). После установки подписывать смогут и другие программы: КриптоАРМ, браузер и т.д."/>
+                    </MenuFlyout>
+                </Button.Flyout>
             </Button>
             <Button Grid.Column="4" Margin="4,0,0,0"
-                    Command="{Binding DeleteCertificateCommand}"
-                    ToolTip.Tip="Удалить сохранённую на компьютере копию сертификата (файл с ключом затирается). Токен и системное хранилище не затрагиваются.">
+                    ToolTip.Tip="Удаление сохранённых копий сертификата. Токен не затрагивается.">
                 <TextBlock Text="🗑" FontSize="14"/>
+                <Button.Flyout>
+                    <MenuFlyout>
+                        <MenuItem Header="Удалить сохранённую копию из программы"
+                                  Command="{Binding DeleteCertificateCommand}"
+                                  ToolTip.Tip="PFX-файл с ключом затирается и удаляется."/>
+                        <MenuItem Header="Удалить из хранилища Windows"
+                                  Command="{Binding RemoveFromStoreCommand}"
+                                  ToolTip.Tip="Доступно только для сертификатов, которые установила эта программа."/>
+                    </MenuFlyout>
+                </Button.Flyout>
             </Button>
         </Grid>
 

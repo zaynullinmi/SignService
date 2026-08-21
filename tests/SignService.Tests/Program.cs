@@ -469,6 +469,38 @@ catch (InvalidOperationException e) when (e.Message.Contains("пароль"))
     Console.WriteLine("cert vault: wrong password → clear error: OK");
 }
 
+// установка в системное хранилище: другие программы видят сертификат с ключом
+vault.InstallToStore(savedInfo, "test-пароль-123", vaultSettings);
+if (!CertificateVault.IsInStore(savedInfo.Thumbprint)) throw new Exception("cert not installed to store");
+if (!vaultSettings.InstalledInStore.Contains(savedInfo.Thumbprint)) throw new Exception("install not tracked");
+using (var store = new X509Store(StoreName.My, StoreLocation.CurrentUser))
+{
+    store.Open(OpenFlags.ReadOnly);
+    var fromStore = store.Certificates.Find(X509FindType.FindByThumbprint, savedInfo.Thumbprint, false)
+        .Cast<X509Certificate2>().First();
+    if (!fromStore.HasPrivateKey) throw new Exception("installed cert must keep private key");
+    var sigStore = signer.Sign(payload, fromStore, detached: true);   // подпись «как из другой программы»
+    var cmsStore = new SignedCms(new ContentInfo(payload), detached: true);
+    cmsStore.Decode(sigStore);
+    cmsStore.CheckSignature(verifySignatureOnly: true);
+    fromStore.Dispose();
+}
+Console.WriteLine("cert vault: install to system store → visible with key, signs+verifies: OK");
+
+// удаление из хранилища: разрешено только для установленных программой
+vault.RemoveFromStore(savedInfo.Thumbprint, vaultSettings);
+if (CertificateVault.IsInStore(savedInfo.Thumbprint)) throw new Exception("cert must be removed from store");
+if (vaultSettings.InstalledInStore.Contains(savedInfo.Thumbprint)) throw new Exception("install record must be removed");
+try
+{
+    vault.RemoveFromStore(certB.Thumbprint, vaultSettings);
+    throw new Exception("foreign cert removal must be denied");
+}
+catch (InvalidOperationException e) when (e.Message.Contains("не был установлен"))
+{
+    Console.WriteLine("cert vault: remove from store OK; foreign cert removal denied: OK");
+}
+
 // удаление: файл затёрт и удалён, запись убрана
 var pfxPath = Path.Combine(
     Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

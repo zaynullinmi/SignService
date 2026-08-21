@@ -45,6 +45,8 @@ public partial class MainWindowViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(SignAllCommand))]
     [NotifyCanExecuteChangedFor(nameof(SaveCertificateCommand))]
     [NotifyCanExecuteChangedFor(nameof(DeleteCertificateCommand))]
+    [NotifyCanExecuteChangedFor(nameof(InstallCertificateCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RemoveFromStoreCommand))]
     [NotifyCanExecuteChangedFor(nameof(StampOnlyCommand))]
     private CertificateItem? _selectedCertificate;
 
@@ -340,6 +342,79 @@ public partial class MainWindowViewModel : ObservableObject
         catch (Exception ex)
         {
             StatusText = "Удаление сертификата: " + ex.Message;
+        }
+    }
+
+    private bool CanInstallCertificate() =>
+        !IsBusy && SelectedCertificate is { IsSaved: true };
+
+    /// <summary>
+    /// Устанавливает сохранённый на ПК сертификат в системное хранилище Windows —
+    /// чтобы им можно было подписывать и в ДРУГИХ программах (КриптоАРМ, браузер и т.д.).
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanInstallCertificate))]
+    private async Task InstallCertificateAsync()
+    {
+        if (SelectedCertificate is not { Saved: { } saved } item || RequestPasswordAsync is null)
+            return;
+
+        var password = await RequestPasswordAsync(
+            "Установка сертификата в хранилище Windows",
+            $"Сертификат «{item.Subject}» будет установлен в системное хранилище "
+            + "(«Текущий пользователь → Личное»). Введите пароль, заданный при сохранении.",
+            "⚠ ВНИМАНИЕ: после установки закрытый ключ станет доступен ВСЕМ программам, "
+            + "работающим под вашей учётной записью Windows (браузеры, КриптоАРМ и др.), — "
+            + "без ввода пароля этой программы. Ключ будет защищён средствами Windows. "
+            + "Устанавливайте только на личном компьютере и удалите из хранилища, "
+            + "когда перестанет быть нужен.",
+            false);
+        if (password is null)
+            return;
+
+        try
+        {
+            await Task.Run(() => _vault.InstallToStore(saved, password, _settings));
+            RefreshCertificates();
+            StatusText = $"Сертификат «{item.Subject}» установлен в хранилище Windows — "
+                + "теперь им можно подписывать и в других программах.";
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Установка в хранилище: " + ex.Message;
+        }
+    }
+
+    // Удалять из хранилища разрешаем только то, что программа сама установила.
+    private bool CanRemoveFromStore() =>
+        !IsBusy && SelectedCertificate is { } sel
+            && _settings.InstalledInStore.Contains(sel.Thumbprint, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Удаляет из системного хранилища сертификат, установленный этой программой.</summary>
+    [RelayCommand(CanExecute = nameof(CanRemoveFromStore))]
+    private async Task RemoveFromStoreAsync()
+    {
+        var item = SelectedCertificate;
+        if (item is null || RequestConfirmAsync is null)
+            return;
+
+        var confirmed = await RequestConfirmAsync(
+            "Удаление из хранилища Windows",
+            $"Удалить сертификат «{item.Subject}» из системного хранилища?\n\n"
+            + "Другие программы перестанут его видеть. Сохранённая в этой программе "
+            + "копия (PFX с паролем), если она есть, останется — подписывать здесь "
+            + "можно будет по-прежнему.");
+        if (!confirmed)
+            return;
+
+        try
+        {
+            await Task.Run(() => _vault.RemoveFromStore(item.Thumbprint, _settings));
+            RefreshCertificates();
+            StatusText = $"Сертификат «{item.Subject}» удалён из хранилища Windows.";
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Удаление из хранилища: " + ex.Message;
         }
     }
 

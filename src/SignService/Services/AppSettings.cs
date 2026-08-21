@@ -44,6 +44,12 @@ public class AppSettings
     /// <summary>Сертификаты, сохранённые на этот компьютер (PFX в папке приложения).</summary>
     public List<SavedCertificateInfo> SavedCertificates { get; set; } = new();
 
+    /// <summary>
+    /// Отпечатки сертификатов, установленных этой программой в системное хранилище
+    /// Windows, — удалить из хранилища программа разрешает только их.
+    /// </summary>
+    public List<string> InstalledInStore { get; set; } = new();
+
     public static AppSettings Load()
     {
         try
