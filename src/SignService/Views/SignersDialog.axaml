@@ -1,0 +1,19 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="SignService.Views.SignersDialog"
+        Width="620" Height="520"
+        WindowStartupLocation="CenterOwner"
+        Title="Подписанты и проверка ЭЦП">
+
+    <Grid Margin="16" RowDefinitions="*,Auto">
+        <Border Grid.Row="0" BorderThickness="1" CornerRadius="6"
+                BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}">
+            <ScrollViewer Padding="12">
+                <SelectableTextBlock Name="ReportText" TextWrapping="Wrap"
+                                     FontFamily="Consolas,Menlo,monospace" FontSize="12"/>
+            </ScrollViewer>
+        </Border>
+        <Button Grid.Row="1" Content="Закрыть" HorizontalAlignment="Right"
+                Margin="0,12,0,0" MinWidth="100" Name="CloseButton"/>
+    </Grid>
+</Window>

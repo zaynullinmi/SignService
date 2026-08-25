@@ -28,10 +28,31 @@ public static class PdfStamper
     public static bool IsPdf(string filePath) =>
         Path.GetExtension(filePath).Equals(".pdf", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// Создаёт штампованную копию PDF. Возвращает путь к копии
-    /// («имя (со штампом).pdf» рядом с исходным файлом; существующая копия обновляется).
-    /// </summary>
+    /// <summary>На каких страницах ставить штампы.</summary>
+    public enum StampPages
+    {
+        Last,
+        First,
+        All,
+        Custom,
+    }
+
+    /// <summary>Параметры визуального штампа.</summary>
+    public sealed record StampOptions
+    {
+        public bool WithDate { get; init; } = true;
+
+        public string? LogoPath { get; init; }
+
+        public string? PoaNumber { get; init; }
+
+        public StampPages Pages { get; init; } = StampPages.Last;
+
+        /// <summary>Номера страниц для режима Custom, например «1,3-5».</summary>
+        public string? CustomPages { get; init; }
+    }
+
+    /// <summary>Совместимая обёртка: один подписант, штамп на последней странице.</summary>
     public static string CreateStampedCopy(
         string pdfPath,
         X509Certificate2 certificate,
@@ -39,13 +60,10 @@ public static class PdfStamper
         string? logoPath,
         DateTime signTime,
         string? poaNumber = null)
-        => CreateStampedCopy(pdfPath, new[] { certificate }, withDate, logoPath, signTime, poaNumber);
+        => CreateStampedCopy(pdfPath, new[] { certificate },
+            new StampOptions { WithDate = withDate, LogoPath = logoPath, PoaNumber = poaNumber }, signTime);
 
-    /// <summary>
-    /// Штампованная копия с несколькими подписантами (по блоку данных на каждого) —
-    /// используется в режиме «копия отдельно», когда штамп отражает всех
-    /// подписантов итоговой подписи.
-    /// </summary>
+    /// <summary>Совместимая обёртка: несколько подписантов, последняя страница.</summary>
     public static string CreateStampedCopy(
         string pdfPath,
         IReadOnlyList<X509Certificate2> certificates,
@@ -53,6 +71,19 @@ public static class PdfStamper
         string? logoPath,
         DateTime signTime,
         string? poaNumber = null)
+        => CreateStampedCopy(pdfPath, certificates,
+            new StampOptions { WithDate = withDate, LogoPath = logoPath, PoaNumber = poaNumber }, signTime);
+
+    /// <summary>
+    /// Создаёт штампованную копию «имя (со штампом).pdf» (существующая обновляется):
+    /// на выбранных страницах — ОТДЕЛЬНАЯ плашка на каждого подписанта
+    /// (колонками из правого нижнего угла).
+    /// </summary>
+    public static string CreateStampedCopy(
+        string pdfPath,
+        IReadOnlyList<X509Certificate2> certificates,
+        StampOptions options,
+        DateTime signTime)
     {
         if (certificates.Count == 0)
             throw new ArgumentException("Нет сертификатов для штампа.", nameof(certificates));
@@ -62,53 +93,122 @@ public static class PdfStamper
         var outputPath = Path.Combine(directory, $"{stem} (со штампом).pdf");
 
         using var document = PdfReader.Open(pdfPath, PdfDocumentOpenMode.Modify);
-        var page = document.Pages[document.Pages.Count - 1];
-        using (var gfx = XGraphics.FromPdfPage(page))
+        foreach (var pageIndex in ResolvePages(options, document.Pages.Count))
         {
-            DrawStamp(gfx, page, certificates, withDate, logoPath, signTime, poaNumber);
+            var page = document.Pages[pageIndex];
+            using var gfx = XGraphics.FromPdfPage(page);
+            DrawStampsOnPage(gfx, page, certificates, options, signTime);
         }
 
         document.Save(outputPath);
         return outputPath;
     }
 
-    private static void DrawStamp(
+    /// <summary>Индексы страниц (0-based) по выбранному режиму; «1,3-5» — как в диалогах печати.</summary>
+    public static IReadOnlyList<int> ResolvePages(StampOptions options, int pageCount)
+    {
+        switch (options.Pages)
+        {
+            case StampPages.First:
+                return new[] { 0 };
+            case StampPages.All:
+                return Enumerable.Range(0, pageCount).ToArray();
+            case StampPages.Custom:
+                var result = new SortedSet<int>();
+                foreach (var part in (options.CustomPages ?? "").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var range = part.Split('-', 2, StringSplitOptions.TrimEntries);
+                    if (!int.TryParse(range[0], out var from))
+                        throw new InvalidOperationException($"Непонятный номер страницы «{part}» — укажите, например: 1,3-5.");
+                    var to = from;
+                    if (range.Length == 2 && !int.TryParse(range[1], out to))
+                        throw new InvalidOperationException($"Непонятный диапазон страниц «{part}».");
+                    for (var p = Math.Max(1, from); p <= Math.Min(pageCount, to); p++)
+                        result.Add(p - 1);
+                }
+
+                if (result.Count == 0)
+                    throw new InvalidOperationException(
+                        $"В документе {pageCount} стр., а указанные страницы «{options.CustomPages}» не найдены.");
+                return result.ToArray();
+            default:
+                return new[] { pageCount - 1 };
+        }
+    }
+
+    // Раскладка: плашки подписантов колонками из правого нижнего угла вверх,
+    // при нехватке высоты — следующая колонка левее.
+    private static void DrawStampsOnPage(
         XGraphics gfx, PdfPage page, IReadOnlyList<X509Certificate2> certificates,
-        bool withDate, string? logoPath, DateTime signTime, string? poaNumber)
+        StampOptions options, DateTime signTime)
     {
         const double width = 250;
         const double margin = 20;
+        const double gap = 8;
+
+        var x = page.Width.Point - width - margin;
+        var y = page.Height.Point - margin;
+
+        foreach (var certificate in certificates)
+        {
+            var height = ComputeStampHeight(certificate, options);
+            if (y - height < margin && y < page.Height.Point - margin)
+            {
+                // колонка заполнена — следующая левее
+                x -= width + gap;
+                y = page.Height.Point - margin;
+            }
+
+            y -= height;
+            DrawSingleStamp(gfx, new XRect(x, y, width, height), certificate, options, signTime);
+            y -= gap;
+        }
+    }
+
+    private static List<string> StampLines(X509Certificate2 certificate, StampOptions options)
+    {
+        var lines = new List<string>
+        {
+            $"Сертификат: {certificate.SerialNumber}",
+            $"Владелец: {CertificateProvider.GetSubjectName(certificate)}",
+            $"Действителен: с {certificate.NotBefore:dd.MM.yyyy} по {certificate.NotAfter:dd.MM.yyyy}",
+        };
+        if (!string.IsNullOrWhiteSpace(options.PoaNumber))
+            lines.Add($"Действует на основании МЧД № {options.PoaNumber}");
+        return lines;
+    }
+
+    private const double StampPad = 8;
+    private const double StampLineHeight = 10.5;
+    private const double StampTitleHeight = 24;
+
+    private static double ComputeStampHeight(X509Certificate2 certificate, StampOptions options)
+    {
+        var logoSize = options.LogoPath is not null ? 34.0 : 0.0;
+        var bodyLines = StampLines(certificate, options).Count + (options.WithDate ? 1 : 0);
+        return StampPad * 2 + Math.Max(StampTitleHeight, logoSize) + 4 + bodyLines * StampLineHeight;
+    }
+
+    private static void DrawSingleStamp(
+        XGraphics gfx, XRect rect, X509Certificate2 certificate, StampOptions options, DateTime signTime)
+    {
+        var width = rect.Width;
         var blue = XColor.FromArgb(0x1B, 0x4F, 0x9C);
         var pen = new XPen(blue, 1.2);
         var titleFont = new XFont("stamp", 8, XFontStyleEx.Bold);
         var textFont = new XFont("stamp", 7, XFontStyleEx.Regular);
 
-        // Содержимое: блок на каждого подписанта, затем общие строки
-        var lines = new List<string>();
-        for (var i = 0; i < certificates.Count; i++)
-        {
-            var c = certificates[i];
-            if (certificates.Count > 1)
-                lines.Add($"Подписант {i + 1}:");
-            lines.Add($"Сертификат: {c.SerialNumber}");
-            lines.Add($"Владелец: {CertificateProvider.GetSubjectName(c)}");
-            lines.Add($"Действителен: с {c.NotBefore:dd.MM.yyyy} по {c.NotAfter:dd.MM.yyyy}");
-        }
+        var lines = StampLines(certificate, options);
+        var dateLine = options.WithDate ? $"Дата подписания: {signTime:dd.MM.yyyy HH:mm}" : null;
+        var logoPath = options.LogoPath;
 
-        if (!string.IsNullOrWhiteSpace(poaNumber))
-            lines.Add($"Действует на основании МЧД № {poaNumber}");
-        var dateLine = withDate ? $"Дата подписания: {signTime:dd.MM.yyyy HH:mm}" : null;
-
-        const double pad = 8;
-        const double lineHeight = 10.5;
-        const double titleHeight = 24;
+        const double pad = StampPad;
+        const double lineHeight = StampLineHeight;
+        const double titleHeight = StampTitleHeight;
         var logoSize = logoPath is not null ? 34.0 : 0.0;
-        var bodyLines = lines.Count + (dateLine is null ? 0 : 1);
-        var height = pad * 2 + Math.Max(titleHeight, logoSize) + 4 + bodyLines * lineHeight;
 
-        var x = page.Width.Point - width - margin;
-        var y = page.Height.Point - height - margin;
-        var rect = new XRect(x, y, width, height);
+        var x = rect.X;
+        var y = rect.Y;
 
         // Фон и рамка со скруглением
         gfx.DrawRoundedRectangle(pen, XBrushes.White, rect, new XSize(8, 8));

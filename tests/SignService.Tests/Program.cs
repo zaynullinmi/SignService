@@ -739,6 +739,56 @@ poaCms.Decode(await File.ReadAllBytesAsync(poaSignResult.SignaturePath));
 poaCms.CheckSignature(verifySignatureOnly: true);
 Console.WriteLine("sign with POA: signature valid, EMCHD xml+sig copied next to document: OK");
 
+// ===== 17. Штамп: выбор страниц и раскладка =====
+var rp = PdfStamper.ResolvePages(new PdfStamper.StampOptions { Pages = PdfStamper.StampPages.Custom, CustomPages = "1,3-5,9" }, 10);
+if (!rp.SequenceEqual(new[] { 0, 2, 3, 4, 8 })) throw new Exception("custom pages parse wrong: " + string.Join(",", rp));
+if (!PdfStamper.ResolvePages(new PdfStamper.StampOptions { Pages = PdfStamper.StampPages.All }, 3).SequenceEqual(new[] { 0, 1, 2 }))
+    throw new Exception("all pages wrong");
+if (!PdfStamper.ResolvePages(new PdfStamper.StampOptions(), 7).SequenceEqual(new[] { 6 }))
+    throw new Exception("last page default wrong");
+try
+{
+    PdfStamper.ResolvePages(new PdfStamper.StampOptions { Pages = PdfStamper.StampPages.Custom, CustomPages = "abc" }, 3);
+    throw new Exception("bad pages must fail");
+}
+catch (InvalidOperationException) { }
+Console.WriteLine("stamp pages: parse (1,3-5,9), all, last, bad input: OK");
+
+// штамп на всех страницах с несколькими подписантами — по плашке на каждого
+var multiStamped = PdfStamper.CreateStampedCopy(
+    pdfPath,
+    new[] { cert, certB, certC },
+    new PdfStamper.StampOptions { Pages = PdfStamper.StampPages.All, WithDate = true },
+    DateTime.Now);
+if (!File.Exists(multiStamped)) throw new Exception("multi-signer all-pages stamp failed");
+Console.WriteLine("stamp: 3 signers × all pages rendered: OK");
+
+// ===== 18. Проверка ЭЦП (SignatureVerifier) =====
+var vReport = SignatureVerifier.Verify(Merge(sigA, sigB), payload);
+if (vReport.Signers.Count != 2) throw new Exception("verify: expected 2 signers");
+if (!vReport.Signers.All(s => s.Ok)) throw new Exception("verify: both must pass");
+if (!vReport.Signers.All(s => s.SigningTime is not null)) throw new Exception("verify: signing time missing");
+if (!vReport.Summary.Contains("Все подписанты")) throw new Exception("verify summary wrong");
+Console.WriteLine("verify: 2 valid signers, crypto+doc checks pass: OK");
+
+// подпись под другой версией → подписант помечается
+var vBad = SignatureVerifier.Verify(Merge(sigA, sigStale), payload);
+if (vBad.Signers.Count(s => s.Ok) != 1) throw new Exception("verify: stale signer must fail");
+if (!vBad.Signers.Any(s => s.DocMatchText.Contains("НЕ соответствует"))) throw new Exception("verify: mismatch text missing");
+Console.WriteLine("verify: stale signer flagged, valid one passes: OK");
+
+// прикреплённая подпись проверяется без внешнего документа
+var vAttached = SignatureVerifier.Verify(attachedA, null);
+if (!vAttached.Attached || vAttached.Signers.Count != 1 || !vAttached.Signers[0].Ok)
+    throw new Exception("verify attached failed");
+Console.WriteLine("verify: attached container without external doc: OK");
+
+// текстовый отчёт содержит ключевые поля
+var vText = SignatureVerifier.Format(vReport, "документ.bin", "документ.bin.sig");
+if (!vText.Contains("Подписант 1") || !vText.Contains("Итог:") || !vText.Contains("Время подписания"))
+    throw new Exception("verify report format wrong");
+Console.WriteLine("verify: text report format: OK");
+
 try { Directory.Delete(tempRoot, true); } catch { }
 Console.WriteLine("ALL TESTS PASSED");
 return 0;

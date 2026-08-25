@@ -1,0 +1,28 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SignService.ViewModels"
+        x:Class="SignService.Views.SettingsDialog"
+        x:DataType="vm:MainWindowViewModel"
+        Width="520" SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Title="Настройки">
+
+    <StackPanel Margin="16" Spacing="10">
+        <TextBlock Text="Штамп времени в подписи" FontWeight="SemiBold"/>
+        <CheckBox IsChecked="{Binding UseTimestamp}"
+                  Content="Добавлять штамп времени (усовершенствованная подпись CAdES-T)"
+                  ToolTip.Tip="К подписи добавляется метка доверенного времени от службы TSA (RFC 3161). Без галочки — обычная усиленная подпись CAdES-BES."/>
+        <TextBlock Text="Адрес службы штампов времени (TSA):"/>
+        <TextBox Text="{Binding TsaUrl}"
+                 Watermark="http://…/tsp — уточните у вашего УЦ"
+                 IsEnabled="{Binding UseTimestamp}"/>
+        <TextBlock TextWrapping="Wrap" FontSize="11"
+                   Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                   Text="Адрес выдаёт оператор службы штампов времени: удостоверяющий центр, выпустивший вашу подпись, или администратор организации (КриптоПро TSP). Для тестов: http://testca2012.cryptopro.ru/tsp/tsp.srf"/>
+
+        <Separator/>
+
+        <Button Content="Закрыть" HorizontalAlignment="Right" MinWidth="100" Name="CloseButton"/>
+    </StackPanel>
+</Window>

@@ -159,15 +159,11 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty]
     private string _statusText = "Перетащите файлы в окно или добавьте их через «Обзор…»";
 
-    /// <summary>Текст окна лога: все операции с отметкой времени.</summary>
+    /// <summary>Текст окна лога (всегда видимого): все операции с отметкой времени.</summary>
     [ObservableProperty]
     private string _logText = "";
 
-    /// <summary>Показывать ли панель лога.</summary>
-    [ObservableProperty]
-    private bool _isLogVisible;
-
-    // Каждая смена статуса попадает и в лог — плюс подробные строки по файлам.
+    // Каждая смена статуса попадает в лог — статусная строка в UI не дублируется.
     partial void OnStatusTextChanged(string value) => Log(value);
 
     private void Log(string message)
@@ -178,10 +174,16 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void ToggleLog() => IsLogVisible = !IsLogVisible;
-
-    [RelayCommand]
     private void ClearLog() => LogText = "";
+
+    /// <summary>
+    /// Запрос диалога параметров штампа (реализуется окном).
+    /// Параметр — показывать ли пункт «подписывать копию со штампом».
+    /// </summary>
+    public Func<bool, Task<Views.StampOptionsDialog.Result?>>? RequestStampOptionsAsync { get; set; }
+
+    /// <summary>Показ отчёта «Подписанты и проверка ЭЦП» (реализуется окном).</summary>
+    public Action<string>? ShowSignersReport { get; set; }
 
     /// <summary>
     /// Запрос диалога выбора файлов; обрабатывается в MainWindow,
@@ -203,6 +205,12 @@ public partial class MainWindowViewModel : ObservableObject
 
     /// <summary>Запрос диалога выбора документа для сборки криптоконтейнера.</summary>
     public event EventHandler? BuildContainerRequested;
+
+    /// <summary>Запрос диалога выбора .sig для проверки ЭЦП.</summary>
+    public event EventHandler? VerifyFileRequested;
+
+    [RelayCommand(CanExecute = nameof(CanBrowse))]
+    private void VerifyFile() => VerifyFileRequested?.Invoke(this, EventArgs.Empty);
 
     /// <summary>
     /// Запрос пароля у пользователя (заголовок, сообщение, предупреждение или null,
@@ -702,45 +710,183 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanStampOnly))]
     private void StampOnly() => StampOnlyRequested?.Invoke(this, EventArgs.Empty);
 
+    /// <summary>Начальные параметры диалога штампа — из сохранённых настроек.</summary>
+    public PdfStamper.StampOptions BuildInitialStampOptions() => new()
+    {
+        WithDate = StampWithDate,
+        LogoPath = StampLogoPath,
+        Pages = Enum.TryParse<PdfStamper.StampPages>(_settings.StampPagesMode, out var p)
+            ? p
+            : PdfStamper.StampPages.Last,
+        CustomPages = _settings.StampCustomPages,
+    };
+
+    /// <summary>Запоминает параметры, выбранные в диалоге штампа.</summary>
+    public void SaveStampOptions(Views.StampOptionsDialog.Result result)
+    {
+        StampWithDate = result.Options.WithDate;
+        StampLogoPath = result.Options.LogoPath;
+        StampSignCopy = result.SignCopy;
+        _settings.StampPagesMode = result.Options.Pages.ToString();
+        _settings.StampCustomPages = result.Options.CustomPages;
+        _settings.Save();
+    }
+
     /// <summary>
-    /// Ставит визуальный штамп на выбранные PDF без подписания: рядом сохраняется
-    /// копия «имя (со штампом).pdf». Пароль не нужен — используются только
-    /// данные сертификата (открытая часть).
+    /// Ставит визуальный штамп на PDF без подписания. Если рядом с документом
+    /// есть «имя.sig», плашки ставятся для ВСЕХ его подписантов; иначе —
+    /// по данным выбранного сертификата.
     /// </summary>
-    public async Task StampWithoutSigningAsync(IReadOnlyList<string> pdfPaths)
+    public async Task StampWithoutSigningAsync(IReadOnlyList<string> pdfPaths, PdfStamper.StampOptions options)
     {
         if (pdfPaths.Count == 0 || SelectedCertificate is not { } item)
             return;
 
+        options = options with { PoaNumber = options.PoaNumber ?? Poa?.Number };
         IsBusy = true;
         try
         {
-            var lines = new List<string>();
             foreach (var path in pdfPaths)
             {
+                var name = System.IO.Path.GetFileName(path);
                 try
                 {
                     if (!PdfStamper.IsPdf(path))
                     {
-                        lines.Add($"«{System.IO.Path.GetFileName(path)}»: пропущен (не PDF)");
+                        Log($"«{name}»: пропущен (не PDF)");
                         continue;
                     }
 
-                    var stamped = await Task.Run(() => PdfStamper.CreateStampedCopy(
-                        path, item.Certificate, StampWithDate, StampLogoPath, DateTime.Now, Poa?.Number));
-                    lines.Add($"«{System.IO.Path.GetFileName(path)}» → «{System.IO.Path.GetFileName(stamped)}»");
+                    var stamped = await Task.Run(() =>
+                    {
+                        var sigPath = path + ".sig";
+                        var certs = System.IO.File.Exists(sigPath)
+                            ? CmsMerger.GetSignerCertificates(System.IO.File.ReadAllBytes(sigPath))
+                            : Array.Empty<System.Security.Cryptography.X509Certificates.X509Certificate2>();
+                        try
+                        {
+                            return PdfStamper.CreateStampedCopy(
+                                path,
+                                certs.Count > 0 ? certs : new[] { item.Certificate },
+                                options,
+                                DateTime.Now);
+                        }
+                        finally
+                        {
+                            foreach (var c in certs)
+                                c.Dispose();
+                        }
+                    });
+                    Log($"Штамп без подписания: «{name}» → «{System.IO.Path.GetFileName(stamped)}»");
                 }
                 catch (Exception ex)
                 {
-                    lines.Add($"«{System.IO.Path.GetFileName(path)}»: ошибка — {ex.Message}");
+                    Log($"Штамп без подписания: «{name}» — ошибка: {ex.Message}");
                 }
             }
-
-            StatusText = "Штамп без подписания: " + string.Join(" | ", lines);
         }
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    /// <summary>ПКМ: подписанты и проверка ЭЦП для файла из списка (.sig рядом).</summary>
+    [RelayCommand]
+    private async Task InspectSignaturesAsync(SignFileItem item)
+    {
+        var sigPath = item.FilePath + ".sig";
+        if (!System.IO.File.Exists(sigPath))
+        {
+            StatusText = $"Рядом с «{item.FileName}» нет файла подписи «{System.IO.Path.GetFileName(sigPath)}».";
+            return;
+        }
+
+        await VerifySignatureFileAsync(sigPath);
+    }
+
+    /// <summary>Просмотр подписантов и проверка ЭЦП для файла подписи.</summary>
+    public async Task VerifySignatureFileAsync(string sigPath)
+    {
+        IsBusy = true;
+        try
+        {
+            var documentPath = sigPath.EndsWith(".sig", StringComparison.OrdinalIgnoreCase)
+                ? sigPath[..^4]
+                : null;
+            byte[]? document = documentPath is not null && System.IO.File.Exists(documentPath)
+                ? await System.IO.File.ReadAllBytesAsync(documentPath)
+                : null;
+            var signature = await System.IO.File.ReadAllBytesAsync(sigPath);
+
+            var report = await Task.Run(() => SignatureVerifier.Verify(signature, document));
+            var text = SignatureVerifier.Format(
+                report,
+                document is null
+                    ? (report.Attached ? "(внутри контейнера)" : "(не найден)")
+                    : System.IO.Path.GetFileName(documentPath!),
+                System.IO.Path.GetFileName(sigPath));
+
+            StatusText = $"Проверка ЭЦП «{System.IO.Path.GetFileName(sigPath)}»: {report.Summary}";
+            ShowSignersReport?.Invoke(text);
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Проверка ЭЦП: " + ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    /// <summary>ПКМ: штамп для файла из списка (диалог параметров → копия без подписи).</summary>
+    [RelayCommand]
+    private async Task StampItemAsync(SignFileItem item)
+    {
+        if (RequestStampOptionsAsync is null)
+            return;
+        var result = await RequestStampOptionsAsync(false);
+        if (result is null)
+            return;
+        SaveStampOptions(result);
+        await StampWithoutSigningAsync(new[] { item.FilePath }, result.Options);
+    }
+
+    /// <summary>ПКМ: извлечь из контейнера «имя.sig» рядом с файлом.</summary>
+    [RelayCommand]
+    private async Task ExtractItemAsync(SignFileItem item)
+    {
+        var sigPath = item.FilePath + ".sig";
+        if (!System.IO.File.Exists(sigPath))
+        {
+            StatusText = $"Рядом с «{item.FileName}» нет файла подписи для извлечения.";
+            return;
+        }
+
+        await ExtractContainersAsync(new[] { sigPath });
+    }
+
+    /// <summary>ПКМ: собрать криптоконтейнер из файла и его подписи рядом.</summary>
+    [RelayCommand]
+    private Task BuildContainerItemAsync(SignFileItem item) =>
+        BuildContainerAsync(item.FilePath, null);
+
+    /// <summary>ПКМ: открыть папку файла.</summary>
+    [RelayCommand]
+    private void OpenFolder(SignFileItem item)
+    {
+        try
+        {
+            var directory = System.IO.Path.GetDirectoryName(item.FilePath) ?? ".";
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(directory)
+            {
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Не удалось открыть папку: " + ex.Message;
         }
     }
 
@@ -852,6 +998,23 @@ public partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        // Параметры штампа спрашиваем один раз на весь пакет.
+        PdfStamper.StampOptions? stampParameters = null;
+        if (UseStamp)
+        {
+            if (RequestStampOptionsAsync is null)
+                return;
+            var stampResult = await RequestStampOptionsAsync(true);
+            if (stampResult is null)
+            {
+                StatusText = "Подписание отменено (диалог штампа закрыт).";
+                return;
+            }
+
+            SaveStampOptions(stampResult);
+            stampParameters = stampResult.Options;
+        }
+
         // Перед подписанием с МЧД перепроверяем её против фактического сертификата.
         if (Poa is { } poaCheck)
         {
@@ -892,6 +1055,7 @@ public partial class MainWindowViewModel : ObservableObject
                         StampSignCopy = StampSignCopy,
                         StampWithDate = StampWithDate,
                         StampLogoPath = StampLogoPath,
+                        StampParameters = stampParameters,
                         PowerOfAttorney = Poa,
                     };
                     var result = await Task.Run(

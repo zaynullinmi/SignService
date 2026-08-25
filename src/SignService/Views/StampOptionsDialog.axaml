@@ -1,0 +1,44 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="SignService.Views.StampOptionsDialog"
+        Width="520" SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Title="Параметры штампа">
+
+    <StackPanel Margin="16" Spacing="10">
+        <TextBlock Text="На каких страницах ставить штампы (по плашке на каждого подписанта):"
+                   FontWeight="SemiBold" TextWrapping="Wrap"/>
+        <StackPanel Orientation="Horizontal" Spacing="14">
+            <RadioButton Name="PagesLast" GroupName="Pages" Content="последняя" IsChecked="True"/>
+            <RadioButton Name="PagesFirst" GroupName="Pages" Content="первая"/>
+            <RadioButton Name="PagesAll" GroupName="Pages" Content="все"/>
+            <RadioButton Name="PagesCustom" GroupName="Pages" Content="указанные:"/>
+            <TextBox Name="CustomPagesBox" Width="120" Watermark="1,3-5"
+                     IsEnabled="{Binding #PagesCustom.IsChecked}"/>
+        </StackPanel>
+
+        <CheckBox Name="WithDateBox" Content="с датой подписания" IsChecked="True"/>
+
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Name="LogoButton" Content="Лого…"
+                    ToolTip.Tip="Картинка логотипа организации (PNG/JPEG) для плашек"/>
+            <TextBlock Name="LogoText" VerticalAlignment="Center"
+                       Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
+            <Button Name="ClearLogoButton" Padding="6,3" ToolTip.Tip="Убрать логотип">
+                <TextBlock Text="✕" FontSize="10"/>
+            </Button>
+        </StackPanel>
+
+        <CheckBox Name="SignCopyBox"
+                  Content="подписывать копию со штампом (⚠ опасно при соподписании)"
+                  ToolTip.Tip="Включайте, только если принимающая сторона требует подпись именно под документом со штампом. При соподписании штамп следующего подписанта изменит файл и сделает прежние подписи недействительными. Без галочки подписывается оригинал, а копия со штампом всех подписантов создаётся отдельно без подписи."/>
+
+        <TextBlock Name="ErrorText" Foreground="Red" IsVisible="False" TextWrapping="Wrap"/>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,6,0,0">
+            <Button Name="CancelButton" Content="Отмена" MinWidth="90"/>
+            <Button Name="OkButton" Content="Продолжить" Classes="accent" MinWidth="110"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

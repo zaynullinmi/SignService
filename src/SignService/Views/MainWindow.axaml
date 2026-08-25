@@ -9,7 +9,7 @@
         WindowStartupLocation="CenterScreen"
         DragDrop.AllowDrop="True">
 
-    <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto">
+    <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto">
 
         <!-- Выбор сертификата -->
         <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto" Margin="0,0,0,8">
@@ -72,53 +72,17 @@
                       IsChecked="{Binding MergeWithExisting}"
                       Content="Объединять с существующей .sig"
                       ToolTip.Tip="Соподписание: если рядом с документом уже есть .sig, ваша подпись добавится к имеющимся подписантам, а не заменит их. Подписи других лиц можно также приложить кнопкой «＋.sig» у файла."/>
-            <CheckBox Margin="0,0,0,4"
+            <CheckBox Margin="0,0,16,4"
                       IsChecked="{Binding IncludeExpiredCertificates}"
                       Content="Показывать просроченные сертификаты"/>
-        </WrapPanel>
-
-        <!-- Штампы -->
-        <WrapPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
-            <CheckBox Margin="0,0,8,4"
-                      IsChecked="{Binding UseTimestamp}"
-                      Content="Штамп времени в подписи (CAdES-T)"
-                      ToolTip.Tip="Подпись с меткой доверенного времени от службы TSA (RFC 3161). Без галочки — обычная усиленная подпись CAdES-BES."/>
-            <TextBox Margin="0,0,16,4" Width="250" MaxHeight="30"
-                     Text="{Binding TsaUrl}"
-                     Watermark="Адрес TSA, например http://…/tsp"
-                     IsEnabled="{Binding UseTimestamp}"
-                     ToolTip.Tip="Адрес службы штампов времени (RFC 3161), например службы вашего УЦ"/>
-            <CheckBox Margin="0,0,8,4"
+            <CheckBox Margin="0,0,0,4"
                       IsChecked="{Binding UseStamp}"
                       Content="Штамп на документ (PDF)"
-                      ToolTip.Tip="Рядом создаётся копия «имя (со штампом).pdf» с плашкой «Документ подписан электронной подписью». По умолчанию подписывается ОРИГИНАЛ, а копия — отдельный файл без подписи со всеми подписантами (безопасно при соподписании)."/>
-            <CheckBox Margin="0,0,8,4"
-                      IsChecked="{Binding StampWithDate}"
-                      IsEnabled="{Binding UseStamp}"
-                      Content="с датой подписания"/>
-            <CheckBox Margin="0,0,8,4"
-                      IsChecked="{Binding StampSignCopy}"
-                      IsEnabled="{Binding UseStamp}"
-                      Content="подписывать копию со штампом"
-                      ToolTip.Tip="⚠ Включайте, только если принимающая сторона требует подпись именно под документом со штампом. При соподписании этот режим опасен: штамп следующего подписанта изменит файл и сделает прежние подписи недействительными. Без галочки подписывается оригинал, а копия со штампом всех подписантов создаётся отдельно без подписи."/>
-            <Button Margin="0,0,4,4" Padding="8,3"
-                    Command="{Binding PickLogoCommand}"
-                    IsEnabled="{Binding UseStamp}"
-                    Content="Лого…"
-                    ToolTip.Tip="Картинка логотипа организации (PNG/JPEG) для штампа"/>
-            <TextBlock Margin="0,0,4,4" VerticalAlignment="Center"
-                       Text="{Binding StampLogoDisplay}"
-                       Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
-            <Button Margin="0,0,0,4" Padding="6,3"
-                    Command="{Binding ClearLogoCommand}"
-                    IsEnabled="{Binding UseStamp}"
-                    ToolTip.Tip="Убрать логотип">
-                <TextBlock Text="✕" FontSize="10"/>
-            </Button>
+                      ToolTip.Tip="Перед подписанием откроется диалог параметров штампа (страницы, дата, лого). По умолчанию подписывается ОРИГИНАЛ, а копия «имя (со штампом).pdf» — отдельный файл без подписи с плашками всех подписантов (безопасно при соподписании)."/>
         </WrapPanel>
 
         <!-- Доверенность (МЧД) -->
-        <WrapPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,8">
+        <WrapPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
             <TextBlock Text="Доверенность (МЧД):" VerticalAlignment="Center" Margin="0,0,8,4"/>
             <Button Margin="0,0,8,4" Padding="8,3"
                     Content="Добавить доверенность…"
@@ -137,7 +101,7 @@
         </WrapPanel>
 
         <!-- Зона перетаскивания / список файлов -->
-        <Border Grid.Row="4"
+        <Border Grid.Row="3"
                 Name="DropZone"
                 BorderThickness="2"
                 BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
@@ -170,6 +134,33 @@
                             <DataTemplate x:DataType="vm:SignFileItem">
                                 <Border Margin="0,2" Padding="10,6" CornerRadius="6"
                                         Background="{DynamicResource SystemControlBackgroundListLowBrush}">
+                                    <Border.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="Подписанты и проверка ЭЦП…"
+                                                      Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).InspectSignaturesCommand}"
+                                                      CommandParameter="{Binding}"/>
+                                            <MenuItem Header="Приложить подписи других лиц (＋.sig)…"
+                                                      Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).AttachSignaturesCommand}"
+                                                      CommandParameter="{Binding}"/>
+                                            <Separator/>
+                                            <MenuItem Header="Штамп на PDF (копия без подписи)…"
+                                                      Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).StampItemCommand}"
+                                                      CommandParameter="{Binding}"/>
+                                            <MenuItem Header="Извлечь из контейнера (.sig рядом)"
+                                                      Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).ExtractItemCommand}"
+                                                      CommandParameter="{Binding}"/>
+                                            <MenuItem Header="Собрать контейнер (документ + .sig рядом)"
+                                                      Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).BuildContainerItemCommand}"
+                                                      CommandParameter="{Binding}"/>
+                                            <Separator/>
+                                            <MenuItem Header="Открыть папку файла"
+                                                      Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).OpenFolderCommand}"
+                                                      CommandParameter="{Binding}"/>
+                                            <MenuItem Header="Убрать из списка"
+                                                      Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).RemoveFileCommand}"
+                                                      CommandParameter="{Binding}"/>
+                                        </ContextMenu>
+                                    </Border.ContextMenu>
                                     <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
                                         <StackPanel Grid.Column="0" Spacing="2">
                                             <TextBlock Text="{Binding FileName}" FontWeight="SemiBold"
@@ -212,7 +203,7 @@
         </Border>
 
         <!-- Кнопки -->
-        <StackPanel Grid.Row="5" Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
+        <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
             <Button Content="Обзор…" Command="{Binding BrowseCommand}"/>
             <Button Content="Инструменты ▾"
                     ToolTip.Tip="Операции с подписями без подписания: извлечение, объединение, сборка контейнера, штамп">
@@ -226,6 +217,9 @@
                                   Command="{Binding BuildContainerCommand}"/>
                         <MenuItem Header="Штамп на PDF… (копия со штампом без подписания)"
                                   Command="{Binding StampOnlyCommand}"/>
+                        <Separator/>
+                        <MenuItem Header="Проверить подпись… (подписанты и проверка ЭЦП)"
+                                  Command="{Binding VerifyFileCommand}"/>
                     </MenuFlyout>
                 </Button.Flyout>
             </Button>
@@ -236,15 +230,12 @@
                     HorizontalAlignment="Right"
                     FontWeight="SemiBold"
                     Padding="24,6"/>
-            <Button Content="Лог" Command="{Binding ToggleLogCommand}"
-                    ToolTip.Tip="Показать/скрыть окно лога операций"/>
             <ProgressBar IsIndeterminate="True" Width="120"
                          IsVisible="{Binding IsBusy}" VerticalAlignment="Center"/>
         </StackPanel>
 
-        <!-- Окно лога -->
-        <Grid Grid.Row="6" RowDefinitions="Auto,Auto" Margin="0,8,0,0"
-              IsVisible="{Binding IsLogVisible}">
+        <!-- Лог операций (всегда виден) -->
+        <Grid Grid.Row="5" RowDefinitions="Auto,Auto" Margin="0,8,0,0">
             <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
                 <TextBlock Grid.Column="0" Text="Лог операций" FontWeight="SemiBold"
                            VerticalAlignment="Center"/>
@@ -255,18 +246,19 @@
                      Text="{Binding LogText, Mode=OneWay}"
                      IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
                      FontFamily="Consolas,Menlo,monospace" FontSize="11"
-                     Height="130"/>
+                     Height="120"/>
         </Grid>
 
-        <!-- Статусная строка -->
-        <Grid Grid.Row="7" ColumnDefinitions="*,Auto,Auto" Margin="0,10,0,0">
-            <TextBlock Grid.Column="0" Text="{Binding StatusText}"
-                       Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
-                       TextTrimming="CharacterEllipsis"/>
-            <TextBlock Grid.Column="1" Margin="16,0,8,0" VerticalAlignment="Center"
+        <!-- Нижняя строка: автор и служебные окна -->
+        <Grid Grid.Row="6" ColumnDefinitions="*,Auto,Auto" Margin="0,10,0,0">
+            <TextBlock Grid.Column="0" Margin="0,0,8,0" VerticalAlignment="Center"
                        Text="Автор: Зайнуллин Марат Илгамович — +7-963-694-2461, zaynullinmi@gmail.com"
                        ToolTip.Tip="https://github.com/zaynullinmi"
+                       TextTrimming="CharacterEllipsis"
                        Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
+            <Button Grid.Column="1" Name="SettingsButton" Padding="8,2" Margin="0,0,8,0"
+                    Content="Настройки…"
+                    ToolTip.Tip="Штамп времени (CAdES-T) и адрес службы TSA"/>
             <Button Grid.Column="2" Name="AboutButton" Padding="8,2" Content="О программе"
                     ToolTip.Tip="Версия, автор, история версий и обновления"/>
         </Grid>

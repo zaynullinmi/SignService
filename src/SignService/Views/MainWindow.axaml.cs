@@ -26,6 +26,12 @@ public partial class MainWindow : Window
             await new AboutDialog(settings).ShowDialog(this);
         };
 
+        SettingsButton.Click += async (_, _) =>
+        {
+            if (DataContext is MainWindowViewModel vm)
+                await new SettingsDialog(vm).ShowDialog(this);
+        };
+
         DataContextChanged += (_, _) =>
         {
             if (DataContext is MainWindowViewModel vm)
@@ -38,6 +44,11 @@ public partial class MainWindow : Window
                 vm.StampOnlyRequested += async (_, _) => await BrowseStampOnlyAsync(vm);
                 vm.BuildContainerRequested += async (_, _) => await BrowseBuildContainerAsync(vm);
                 vm.AddPoaRequested += async (_, _) => await BrowsePoaAsync(vm);
+                vm.VerifyFileRequested += async (_, _) => await BrowseVerifyAsync(vm);
+                vm.RequestStampOptionsAsync = async showSignCopy =>
+                    await new StampOptionsDialog(vm.BuildInitialStampOptions(), vm.StampSignCopy, showSignCopy)
+                        .ShowDialog<StampOptionsDialog.Result?>(this);
+                vm.ShowSignersReport = text => _ = new SignersDialog(text).ShowDialog(this);
                 vm.PropertyChanged += (_, args) =>
                 {
                     // автопрокрутка лога вниз
@@ -198,11 +209,41 @@ public partial class MainWindow : Window
             },
         });
 
-        await vm.StampWithoutSigningAsync(files
+        var paths = files
             .Select(f => f.TryGetLocalPath())
             .Where(p => p is not null)
             .Select(p => p!)
-            .ToList());
+            .ToList();
+        if (paths.Count == 0)
+            return;
+
+        var options = await new StampOptionsDialog(vm.BuildInitialStampOptions(), vm.StampSignCopy, showSignCopy: false)
+            .ShowDialog<StampOptionsDialog.Result?>(this);
+        if (options is null)
+            return;
+
+        vm.SaveStampOptions(options);
+        await vm.StampWithoutSigningAsync(paths, options.Options);
+    }
+
+    private async System.Threading.Tasks.Task BrowseVerifyAsync(MainWindowViewModel vm)
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Файл подписи для проверки (документ ищется рядом по имени)",
+            AllowMultiple = false,
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("Подписи CMS (*.sig, *.p7s, *.p7m)")
+                {
+                    Patterns = new[] { "*.sig", "*.p7s", "*.p7m" },
+                },
+                FilePickerFileTypes.All,
+            },
+        });
+
+        if (files.FirstOrDefault()?.TryGetLocalPath() is { } path)
+            await vm.VerifySignatureFileAsync(path);
     }
 
     private async System.Threading.Tasks.Task BrowsePoaAsync(MainWindowViewModel vm)

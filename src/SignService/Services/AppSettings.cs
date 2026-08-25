@@ -45,6 +45,12 @@ public class AppSettings
     /// </summary>
     public bool StampSignCopy { get; set; }
 
+    /// <summary>Режим страниц штампа (Last/First/All/Custom).</summary>
+    public string StampPagesMode { get; set; } = "Last";
+
+    /// <summary>Номера страниц для режима Custom («1,3-5»).</summary>
+    public string? StampCustomPages { get; set; }
+
     /// <summary>Путь к логотипу организации для штампа (PNG/JPEG).</summary>
     public string? StampLogoPath { get; set; }
 

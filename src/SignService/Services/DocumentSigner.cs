@@ -56,6 +56,12 @@ public class DocumentSigner
         public string? StampLogoPath { get; init; }
 
         /// <summary>
+        /// Полные параметры штампа (страницы и т.д.); если null — собираются
+        /// из StampWithDate/StampLogoPath (последняя страница).
+        /// </summary>
+        public PdfStamper.StampOptions? StampParameters { get; init; }
+
+        /// <summary>
         /// Доверенность МЧД: файлы XML и подписи руководителя копируются в каталог
         /// подписанного документа (как это делает Контур), номер попадает в PDF-штамп.
         /// </summary>
@@ -118,13 +124,18 @@ public class DocumentSigner
         // (без подписи, со всеми подписантами) создаётся ниже, после подписания.
         var targetPath = filePath;
         var stampAsCopy = options.Stamp && !options.StampSignCopy && PdfStamper.IsPdf(filePath);
+        var stampOptions = options.StampParameters
+            ?? new PdfStamper.StampOptions { WithDate = options.StampWithDate, LogoPath = options.StampLogoPath };
+        stampOptions = stampOptions with
+        {
+            PoaNumber = stampOptions.PoaNumber ?? options.PowerOfAttorney?.Number,
+        };
         if (options.Stamp && options.StampSignCopy && PdfStamper.IsPdf(filePath))
         {
             try
             {
                 targetPath = PdfStamper.CreateStampedCopy(
-                    filePath, certificate, options.StampWithDate, options.StampLogoPath, DateTime.Now,
-                    options.PowerOfAttorney?.Number);
+                    filePath, new[] { certificate }, stampOptions, DateTime.Now);
             }
             catch (Exception e)
             {
@@ -197,8 +208,7 @@ public class DocumentSigner
                     ? signerCerts
                     : new List<X509Certificate2> { certificate };
                 stampedCopyPath = PdfStamper.CreateStampedCopy(
-                    filePath, stampCerts, options.StampWithDate, options.StampLogoPath, DateTime.Now,
-                    options.PowerOfAttorney?.Number);
+                    filePath, stampCerts, stampOptions, DateTime.Now);
                 foreach (var c in signerCerts)
                     c.Dispose();
             }

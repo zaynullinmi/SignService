@@ -501,6 +501,24 @@ internal static class CmsMerger
     }
 
     /// <summary>
+    /// Сверка каждого подписанта с документом по его messageDigest
+    /// (для ГОСТ — Стрибогом, без криптопровайдера); порядок — как в SignerInfos.
+    /// </summary>
+    public static IReadOnlyList<DocMatch> CheckSignersAgainstDocument(byte[] signature, byte[] document)
+    {
+        var parsed = Parse(Normalize(signature));
+        var cache = new Dictionary<string, byte[]?>();
+        return parsed.Signers
+            .Select(s => CheckSignerAgainstDocument(s.Der, document, cache) switch
+            {
+                SignerDocMatch.Match => DocMatch.Match,
+                SignerDocMatch.Mismatch => DocMatch.Mismatch,
+                _ => DocMatch.Unknown,
+            })
+            .ToList();
+    }
+
+    /// <summary>
     /// Сверяет подпись с документом по messageDigest всех подписантов
     /// (для ГОСТ — Стрибогом, без криптопровайдера). Mismatch — хотя бы один
     /// подписант подписал другой файл; Match — все совпали; Unknown — проверить нечем.
