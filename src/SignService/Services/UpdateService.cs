@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,7 +15,7 @@ namespace SignService.Services;
 /// <summary>
 /// Автообновление программы через GitHub Releases: проверка последнего релиза,
 /// скачивание нового SignService.exe и самозамена (Windows) через командный
-/// скрипт, который дожидается выхода программы, подменяет exe и запускает его.
+/// помощник, который дожидается выхода программы и заменяет exe с резервной копией.
 /// </summary>
 public class UpdateService
 {
@@ -104,7 +105,7 @@ public class UpdateService
         if (update.ExeDownloadUrl is null)
             throw new InvalidOperationException("В релизе нет файла SignService.exe.");
 
-        var tempPath = Path.Combine(Path.GetTempPath(), $"SignService-{update.Version}.exe");
+        var tempPath = Path.Combine(Path.GetTempPath(), $"SignService-{update.Version}-{Guid.NewGuid():N}.exe");
         var bytes = await Http.GetByteArrayAsync(update.ExeDownloadUrl, cancellationToken);
         if (bytes.Length < 1024 * 1024)
             throw new InvalidOperationException("Скачанный файл подозрительно мал — обновление прервано.");
@@ -125,26 +126,91 @@ public class UpdateService
 
         var currentExe = Environment.ProcessPath
             ?? throw new InvalidOperationException("Не удалось определить путь к текущему exe.");
+        if (!Path.GetFileName(currentExe).Equals("SignService.exe", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Автообновление доступно при запуске SignService.exe. Скачайте релиз вручную.");
+        if (!File.Exists(downloadedExePath))
+            throw new FileNotFoundException("Файл обновления не найден.", downloadedExePath);
 
-        var script = Path.Combine(Path.GetTempPath(), "signservice_update.cmd");
-        // Ждём, пока exe освободится (программа закрывается), затем подменяем и запускаем.
-        File.WriteAllText(script, $"""
-            @echo off
-            :wait
-            timeout /t 1 /nobreak >nul
-            del "{currentExe}" 2>nul
-            if exist "{currentExe}" goto wait
-            move /y "{downloadedExePath}" "{currentExe}" >nul
-            start "" "{currentExe}"
-            del "%~f0"
-            """);
+        var script = BuildInstallScript(currentExe, downloadedExePath, Environment.ProcessId);
 
-        Process.Start(new ProcessStartInfo
+        _ = Process.Start(new ProcessStartInfo
         {
-            FileName = "cmd.exe",
-            Arguments = $"/c \"{script}\"",
+            FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
+                "WindowsPowerShell", "v1.0", "powershell.exe"),
+            Arguments = "-NoProfile -NonInteractive -EncodedCommand "
+                + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)),
             CreateNoWindow = true,
             UseShellExecute = false,
-        });
+        }) ?? throw new InvalidOperationException("Не удалось запустить установщик обновления.");
+    }
+
+    // Пути передаются как данные JSON/base64, без интерполяции в команды оболочки.
+    // Этот же помощник проверяется на временных файлах интеграционными тестами.
+    internal static string BuildInstallScript(string currentExe, string downloadedExePath,
+        int processId, bool restart = true)
+    {
+        var config = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+        {
+            current = Path.GetFullPath(currentExe),
+            downloaded = Path.GetFullPath(downloadedExePath),
+            parent = processId,
+            restart,
+        })));
+        return $$"""
+            $ErrorActionPreference = 'Stop'
+            $config = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{config}}')) | ConvertFrom-Json
+            $stage = $config.current + '.' + [Guid]::NewGuid().ToString('N') + '.new'
+            $backup = $config.current + '.' + [Guid]::NewGuid().ToString('N') + '.bak'
+            $log = $config.downloaded + '.update.log'
+            $replaced = $false
+            $parentExited = $config.parent -le 0
+            try {
+                # Подготавливаем полную копию на том же диске до изменения текущего EXE.
+                [IO.File]::Copy($config.downloaded, $stage, $false)
+                if (([IO.FileInfo]::new($stage)).Length -ne ([IO.FileInfo]::new($config.downloaded)).Length) {
+                    throw 'Incomplete update copy'
+                }
+                $deadline = [DateTime]::UtcNow.AddSeconds(30)
+                if (-not $parentExited) {
+                    $parentProcess = Get-Process -Id $config.parent -ErrorAction SilentlyContinue
+                    if ($null -eq $parentProcess) { $parentExited = $true }
+                    else {
+                        while (-not $parentProcess.HasExited -and [DateTime]::UtcNow -lt $deadline) {
+                            Start-Sleep -Milliseconds 250
+                        }
+                        $parentExited = $parentProcess.HasExited
+                    }
+                }
+                if (-not $parentExited) { throw 'Timed out waiting for SignService to exit' }
+                # Replace атомарен: при ошибке исходный EXE остаётся; резервная копия сохраняется.
+                [IO.File]::Replace($stage, $config.current, $backup)
+                $replaced = $true
+                if ($config.restart) {
+                    [Diagnostics.Process]::Start($config.current) | Out-Null
+                }
+                [IO.File]::WriteAllText($log, 'Update installed. Backup: ' + $backup)
+            }
+            catch {
+                $failure = $_.Exception.Message
+                if ($replaced -and [IO.File]::Exists($backup)) {
+                    try {
+                        $failedUpdate = $stage + '.failed'
+                        [IO.File]::Replace($backup, $config.current, $failedUpdate)
+                        [IO.File]::Delete($failedUpdate)
+                    }
+                    catch { $failure += '; rollback failed: ' + $_.Exception.Message + '; backup: ' + $backup }
+                }
+                try { [IO.File]::WriteAllText($log, $failure) } catch { }
+                if ($config.restart -and $parentExited -and [IO.File]::Exists($config.current)) {
+                    try { [Diagnostics.Process]::Start($config.current) | Out-Null } catch { }
+                }
+                exit 1
+            }
+            finally {
+                if ([IO.File]::Exists($stage)) {
+                    try { [IO.File]::Delete($stage) } catch { }
+                }
+            }
+            """;
     }
 }

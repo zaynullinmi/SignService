@@ -222,6 +222,10 @@
                                   Command="{Binding ExtractCommand}"/>
                         <MenuItem Header="Объединить .sig… (несколько подписей в одну)"
                                   Command="{Binding MergeFilesCommand}"/>
+                        <MenuItem Header="Разделить групповую подпись… (отдельная .sig для каждого)"
+                                  Command="{Binding SplitSignaturesCommand}"/>
+                        <MenuItem Header="Исключить подписанта из .sig…"
+                                  Command="{Binding RemoveSignerCommand}"/>
                         <MenuItem Header="Собрать контейнер… (документ + подписи в один .sig)"
                                   Command="{Binding BuildContainerCommand}"/>
                         <MenuItem Header="Штамп на PDF… (копия со штампом без подписания)"

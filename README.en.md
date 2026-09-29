@@ -56,6 +56,12 @@ is published on the [Releases](https://github.com/zaynullinmi/SignService/releas
 - **Extract from .sig…** — pull out of a container: the embedded document
   (byte-exact), a detached signature with all signers, and individual `.sig`
   files per signer (signer names in the file names);
+- **Split group signature…** — a dedicated Tools command creates a detached
+  `.sig` for every signer and saves the embedded document, if present.
+  Existing files are preserved and duplicate names receive a numeric suffix;
+- **Remove signer from .sig…** — select a signer by name and certificate serial
+  number. A new signature file is created with the remaining signatures and
+  embedded document. The original file is kept; removing the last signer is blocked;
 - **Build container…** — pack a document together with its existing
   signatures into an attached `.sig` (the inverse of extraction);
 - **Stamp PDF…** — save a stamped copy of a document without signing.
@@ -65,14 +71,19 @@ is published on the [Releases](https://github.com/zaynullinmi/SignService/releas
 - the "Add power of attorney…" button works like Kontur: pick the MChD XML
   (EMCHD_1 format) and the head's signature (.sig; a neighbouring
   `name.xml.sig` is picked up automatically);
-- the app verifies: the head's signature matches the MChD file (by hash,
-  Streebog for GOST), the validity period has not expired, and the
+- the app cryptographically verifies all signatures over the MChD XML
+  (CryptoAPI with an installed CSP for GOST on Windows), checks the validity
+  period, and verifies that the
   representative in the MChD matches the selected certificate by INN/SNILS;
 - when signing, the MChD files (XML + .sig) are copied next to the signed
   document (the MChD is NOT embedded into the CMS signature — Kontur does
   the same), and the visual PDF stamp gains a
   "Acting under power of attorney No. …" line;
-- the power of attorney is remembered and re-validated on every signing.
+- the XML and signature are re-read on every signing; validation and copying
+  use the same file snapshot. Conflicts with a different MChD in the output
+  directory stop signing before overwriting an existing document signature;
+- this check does not validate CA trust, certificate revocation, the head's
+  authority, or the power of attorney's registry/revocation status.
 
 ### Visual stamp on PDF
 
@@ -107,6 +118,9 @@ is published on the [Releases](https://github.com/zaynullinmi/SignService/releas
 - an **About window**: version, author contacts, changelog, update check;
 - **auto-update**: new releases are checked on GitHub Releases at startup
   (can be disabled) and installed in one click from the About window (Windows).
+  The executable is replaced atomically with a `.bak` backup and rollback if
+  launching fails. Waiting for exit is limited to 30 seconds; the update log
+  is saved beside the downloaded executable in the temporary directory.
 
 ## Requirements
 

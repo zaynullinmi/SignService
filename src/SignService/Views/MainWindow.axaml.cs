@@ -38,6 +38,8 @@ public partial class MainWindow : Window
                 vm.StampOnlyRequested += async (_, _) => await BrowseStampOnlyAsync(vm);
                 vm.BuildContainerRequested += async (_, _) => await BrowseBuildContainerAsync(vm);
                 vm.AddPoaRequested += async (_, _) => await BrowsePoaAsync(vm);
+                vm.SplitSignaturesRequested += async (_, _) => await BrowseSplitSignaturesAsync(vm);
+                vm.RemoveSignerRequested += async (_, _) => await BrowseRemoveSignerAsync(vm);
                 vm.PropertyChanged += (_, args) =>
                 {
                     // автопрокрутка лога вниз
@@ -305,5 +307,41 @@ public partial class MainWindow : Window
             .Where(p => p is not null)
             .Select(p => p!)
             .ToList());
+    }
+
+    private async System.Threading.Tasks.Task BrowseSplitSignaturesAsync(MainWindowViewModel vm)
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Групповые подписи для разделения по подписантам",
+            AllowMultiple = true,
+            FileTypeFilter = new[] { new FilePickerFileType("Подписи CMS") { Patterns = new[] { "*.sig", "*.p7s", "*.p7m" } } },
+        });
+        await vm.SplitSignatureFilesAsync(files.Select(f => f.TryGetLocalPath()).OfType<string>().ToList());
+    }
+
+    private async System.Threading.Tasks.Task BrowseRemoveSignerAsync(MainWindowViewModel vm)
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Подпись, из которой нужно исключить подписанта",
+            AllowMultiple = false,
+            FileTypeFilter = new[] { new FilePickerFileType("Подписи CMS") { Patterns = new[] { "*.sig", "*.p7s", "*.p7m" } } },
+        });
+        var path = files.FirstOrDefault()?.TryGetLocalPath();
+        if (path is null) return;
+        try
+        {
+            var signers = await System.Threading.Tasks.Task.Run(() => SignService.Services.CmsExtractor.ListSigners(path));
+            if (signers.Count < 2)
+            {
+                vm.StatusText = "Нельзя исключить последнего подписанта: в файле меньше двух подписантов.";
+                return;
+            }
+            var id = await new SignerDialog(signers).ShowDialog<string?>(this);
+            if (id is not null)
+                await vm.RemoveSignerFromFileAsync(path, id);
+        }
+        catch (System.Exception e) { vm.StatusText = "Не удалось прочитать подпись: " + e.Message; }
     }
 }
