@@ -20,9 +20,14 @@ namespace SignService.Services;
 /// </summary>
 public class CertificateVault
 {
-    private static readonly string VaultDir = Path.Combine(
+    private readonly string VaultDir;
+
+    public CertificateVault(string? vaultDirectory = null)
+    {
+        VaultDir = vaultDirectory is not null ? Path.GetFullPath(vaultDirectory) : Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "SignService", "certificates");
+    }
 
     /// <summary>
     /// Сохраняет сертификат с закрытым ключом в защищённый паролем PFX.

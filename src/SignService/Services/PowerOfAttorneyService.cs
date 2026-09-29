@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Formats.Asn1;
 using System.Globalization;
 using System.IO;
@@ -48,7 +49,13 @@ public static class PowerOfAttorneyService
     /// <summary>Разбирает XML МЧД (EMCHD_1). Пространство имён допускается любое.</summary>
     public static PoaInfo Parse(string xmlPath, string sigPath)
     {
-        var doc = XDocument.Load(xmlPath);
+        return ParseBytes(File.ReadAllBytes(xmlPath), xmlPath, sigPath);
+    }
+
+    private static PoaInfo ParseBytes(byte[] xml, string xmlPath, string sigPath)
+    {
+        using var stream = new MemoryStream(xml, writable: false);
+        var doc = XDocument.Load(stream);
         var root = doc.Root ?? throw new InvalidOperationException("Пустой XML-файл доверенности.");
         if (root.Name.LocalName != "Доверенность")
             throw new InvalidOperationException(
@@ -93,36 +100,43 @@ public static class PowerOfAttorneyService
     }
 
     /// <summary>
-    /// Проверяет доверенность: подпись руководителя соответствует XML (по messageDigest,
-    /// для ГОСТ — Стрибогом), срок действия не истёк, представитель в МЧД совпадает
+    /// Проверяет доверенность: криптографическую подпись XML, срок действия, соответствие представителя
     /// с выбранным сертификатом (по ИНН/СНИЛС из subject).
     /// </summary>
     public static CheckResult Validate(PoaInfo poa, X509Certificate2? signerCertificate)
     {
-        // 1. Подпись руководителя соответствует файлу МЧД
         try
         {
-            var xml = File.ReadAllBytes(poa.XmlPath);
-            var sig = File.ReadAllBytes(poa.SigPath);
-            switch (CmsMerger.CheckAgainstDocument(sig, xml))
-            {
-                case CmsMerger.DocMatch.Mismatch:
-                    return new CheckResult(CheckState.Error,
-                        "Подпись руководителя НЕ соответствует файлу МЧД (подписан другой файл или другая версия).");
-                case CmsMerger.DocMatch.Unknown:
-                    return new CheckResult(CheckState.Warning,
-                        "Не удалось проверить соответствие подписи руководителя файлу МЧД.");
-            }
+            return ReadValidated(poa, signerCertificate).Check;
         }
         catch (Exception e)
         {
-            return new CheckResult(CheckState.Error, "Не удалось разобрать подпись руководителя: " + e.Message);
+            return new CheckResult(CheckState.Error, "Не удалось проверить МЧД и подпись руководителя: " + e.Message);
         }
+    }
 
+    // Сведения, проверка и копирование относятся к одним и тем же байтам файлов.
+    internal sealed record Snapshot(PoaInfo Info, byte[] Xml, byte[] Signature, CheckResult Check);
+
+    internal static Snapshot ReadValidated(PoaInfo poa, X509Certificate2? signerCertificate)
+    {
+        var xml = File.ReadAllBytes(poa.XmlPath);
+        var sig = File.ReadAllBytes(poa.SigPath);
+        var current = ParseBytes(xml, poa.XmlPath, poa.SigPath);
+        CmsVerifier.VerifyDocument(sig, xml);
+        return new Snapshot(current, xml, sig, ValidateMetadata(current, signerCertificate));
+    }
+
+    private static CheckResult ValidateMetadata(PoaInfo poa, X509Certificate2? signerCertificate)
+    {
         // 2. Срок действия
+        if (poa.ValidTo is null)
+            return new CheckResult(CheckState.Error, "В МЧД отсутствует корректный срок действия.");
         if (poa.ValidTo is { } validTo && validTo.Date < DateTime.Today)
             return new CheckResult(CheckState.Error,
                 $"Срок действия МЧД истёк {validTo:dd.MM.yyyy}.");
+        if (poa.IssueDate is { } issued && issued.Date > DateTime.Today)
+            return new CheckResult(CheckState.Error, "Дата выдачи МЧД ещё не наступила.");
 
         // 3. Представитель соответствует сертификату подписанта
         if (signerCertificate is not null)
@@ -136,6 +150,10 @@ public static class PowerOfAttorneyService
             var innOk = certInn.Length > 0 && poaInn.Length > 0 && certInn == poaInn;
             var snilsOk = certSnils.Length > 0 && poaSnils.Length > 0 && certSnils == poaSnils;
 
+            if ((certInn.Length > 0 && poaInn.Length > 0 && !innOk)
+                || (certSnils.Length > 0 && poaSnils.Length > 0 && !snilsOk))
+                return new CheckResult(CheckState.Error, "ИНН/СНИЛС представителя МЧД противоречат сертификату.");
+
             if (!innOk && !snilsOk)
             {
                 if (certInn.Length == 0 && certSnils.Length == 0)
@@ -146,8 +164,7 @@ public static class PowerOfAttorneyService
             }
         }
 
-        return new CheckResult(CheckState.Ok, "Доверенность проверена: подпись руководителя "
-            + "соответствует МЧД, срок действия не истёк"
+        return new CheckResult(CheckState.Ok, "Криптографическая подпись МЧД проверена, срок действия не истёк"
             + (signerCertificate is null ? "." : ", представитель совпадает с сертификатом."));
     }
 
@@ -157,12 +174,47 @@ public static class PowerOfAttorneyService
     /// </summary>
     public static void CopyNextToDocument(PoaInfo poa, string documentPath)
     {
+        CopyNextToDocument(ReadValidated(poa, null), documentPath);
+    }
+
+    internal static void CopyNextToDocument(Snapshot snapshot, string documentPath)
+    {
+        if (snapshot.Check.State == CheckState.Error)
+            throw new InvalidOperationException(snapshot.Check.Message);
         var directory = Path.GetDirectoryName(Path.GetFullPath(documentPath)) ?? ".";
-        foreach (var source in new[] { poa.XmlPath, poa.SigPath })
+        var files = new[]
         {
-            var target = Path.Combine(directory, Path.GetFileName(source));
-            if (!File.Exists(target))
-                File.Copy(source, target);
+            (Path: Path.Combine(directory, Path.GetFileName(snapshot.Info.XmlPath)), Data: snapshot.Xml),
+            (Path: Path.Combine(directory, Path.GetFileName(snapshot.Info.SigPath)), Data: snapshot.Signature),
+        };
+        if (string.Equals(files[0].Path, files[1].Path, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("XML и подпись МЧД должны иметь разные имена файлов.");
+        // Проверяем обе коллизии до записи любого файла.
+        foreach (var file in files)
+            if (File.Exists(file.Path) && !File.ReadAllBytes(file.Path).AsSpan().SequenceEqual(file.Data))
+                throw new IOException($"Рядом с документом уже есть другой файл МЧД «{Path.GetFileName(file.Path)}». Переместите его или выберите другой каталог.");
+
+        var created = new List<string>();
+        try
+        {
+            foreach (var file in files)
+            {
+                if (File.Exists(file.Path))
+                {
+                    if (!File.ReadAllBytes(file.Path).AsSpan().SequenceEqual(file.Data))
+                        throw new IOException("Файл МЧД изменился во время копирования: " + file.Path);
+                    continue;
+                }
+                using var output = new FileStream(file.Path, FileMode.CreateNew, FileAccess.Write);
+                created.Add(file.Path);
+                output.Write(file.Data);
+            }
+        }
+        catch
+        {
+            foreach (var path in created)
+                try { File.Delete(path); } catch { }
+            throw;
         }
     }
 

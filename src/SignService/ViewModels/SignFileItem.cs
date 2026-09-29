@@ -80,7 +80,17 @@ public partial class SignFileItem : ObservableObject
         }
 
         ExtraCount = _extraSignatures.Count;
+        if (added > 0 && Status == SignStatus.Signed)
+            ResetForSigning();
         return added;
+    }
+
+    public void ResetForSigning()
+    {
+        Status = SignStatus.Pending;
+        Message = null;
+        SignaturePath = null;
+        SignerCount = 0;
     }
 
     public string StatusDisplay => Status switch

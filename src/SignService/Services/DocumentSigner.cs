@@ -112,6 +112,13 @@ public class DocumentSigner
         SignOptions options,
         CancellationToken cancellationToken = default)
     {
+        PowerOfAttorneyService.Snapshot? poaSnapshot = null;
+        if (options.PowerOfAttorney is { } requestedPoa)
+        {
+            poaSnapshot = PowerOfAttorneyService.ReadValidated(requestedPoa, certificate);
+            if (poaSnapshot.Check.State == PowerOfAttorneyService.CheckState.Error)
+                throw new InvalidOperationException(poaSnapshot.Check.Message);
+        }
         // Режим «подписывать копию со штампом»: штамп меняет содержимое PDF,
         // поэтому копия создаётся ДО подписания и подписывается именно она.
         // В режиме «копия отдельно» подписывается ОРИГИНАЛ, а штампованная копия
@@ -124,7 +131,7 @@ public class DocumentSigner
             {
                 targetPath = PdfStamper.CreateStampedCopy(
                     filePath, certificate, options.StampWithDate, options.StampLogoPath, DateTime.Now,
-                    options.PowerOfAttorney?.Number);
+                    poaSnapshot?.Info.Number);
             }
             catch (Exception e)
             {
@@ -163,9 +170,10 @@ public class DocumentSigner
         int signerCount;
         IReadOnlyList<string> excluded;
         IReadOnlyList<string> unverified;
+        byte[] resultSignature;
         if (inputs.Count == 1)
         {
-            await File.WriteAllBytesAsync(signaturePath, own, cancellationToken);
+            resultSignature = own;
             signerCount = 1;
             excluded = Array.Empty<string>();
             unverified = Array.Empty<string>();
@@ -175,14 +183,30 @@ public class DocumentSigner
             // Объединение с проверкой: подписи под другим файлом или прежней версией
             // документа исключаются — иначе портал отклонит весь контейнер.
             var merged = CmsMerger.MergeForDocument(inputs, data);
-            await File.WriteAllBytesAsync(signaturePath, merged.Signature, cancellationToken);
+            resultSignature = options.Detached
+                ? CmsMerger.ConvertToDetached(merged.Signature)
+                : CmsMerger.AttachContent(merged.Signature, data);
             signerCount = merged.SignerCount;
             excluded = merged.ExcludedSigners;
             unverified = merged.UnverifiedSigners;
         }
 
-        if (options.PowerOfAttorney is { } poa)
-            PowerOfAttorneyService.CopyNextToDocument(poa, targetPath);
+        if (poaSnapshot is not null)
+            PowerOfAttorneyService.CopyNextToDocument(poaSnapshot, targetPath);
+
+        // Сбой или отмена записи не должны уничтожать предыдущую подпись.
+        var temporarySignature = signaturePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await File.WriteAllBytesAsync(temporarySignature, resultSignature, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(temporarySignature, signaturePath, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporarySignature))
+                File.Delete(temporarySignature);
+        }
 
         // Режим «копия отдельно»: штампованная копия БЕЗ подписи, со всеми
         // подписантами итогового .sig — пересоздаётся после каждого подписания.
@@ -198,7 +222,7 @@ public class DocumentSigner
                     : new List<X509Certificate2> { certificate };
                 stampedCopyPath = PdfStamper.CreateStampedCopy(
                     filePath, stampCerts, options.StampWithDate, options.StampLogoPath, DateTime.Now,
-                    options.PowerOfAttorney?.Number);
+                    poaSnapshot?.Info.Number);
                 foreach (var c in signerCerts)
                     c.Dispose();
             }

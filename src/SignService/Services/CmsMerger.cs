@@ -86,7 +86,17 @@ internal static class CmsMerger
             throw new InvalidOperationException(
                 "Все объединяемые подписи не соответствуют текущему содержимому документа.");
 
-        var merged = BuildMerged(parsed);
+        // Содержимое входного контейнера может относиться к исключённой старой
+        // подписи. Собираем результат только с текущим документом.
+        var attached = parsed.Any(p => p.HasContent);
+        foreach (var p in parsed)
+        {
+            p.EncapContentInfo = StripContent(p.EncapContentInfo);
+            p.HasContent = false;
+        }
+        var merged = BuildMerged(parsed.Where(p => p.Signers.Count > 0).ToList());
+        if (attached)
+            merged = AttachContent(merged, document);
         return new MergeResult(
             merged,
             CountSigners(merged),
@@ -188,6 +198,42 @@ internal static class CmsMerger
         var certIndex = BuildCertIndex(new List<ParsedSignedData> { parsed });
         var names = parsed.Signers.Select(s => SignerDisplayName(s.Der, certIndex)).ToList();
         return new ContainerInfo(parsed.HasContent, names);
+    }
+
+    public sealed record SignerDescriptor(string Id, string Name, string CertificateId);
+
+    public static IReadOnlyList<SignerDescriptor> GetSigners(byte[] signature)
+    {
+        var parsed = Parse(Normalize(signature));
+        var index = BuildCertIndex(new List<ParsedSignedData> { parsed });
+        return parsed.Signers.Select(s =>
+        {
+            var reader = new AsnReader(Convert.FromHexString(s.SidKey), AsnEncodingRules.BER);
+            string identifier;
+            if (reader.PeekTag().TagClass == TagClass.Universal)
+            {
+                var sid = reader.ReadSequence();
+                sid.ReadEncodedValue(); // issuer
+                identifier = Convert.ToHexString(sid.ReadIntegerBytes().Span);
+            }
+            else
+            {
+                identifier = s.SidKey; // subjectKeyIdentifier
+            }
+            return new SignerDescriptor(s.SidKey, SignerDisplayName(s.Der, index), identifier);
+        }).ToList();
+    }
+
+    /// <summary>Удаляет SignerInfo по устойчивому идентификатору, сохраняя документ и остальные подписи.</summary>
+    public static byte[] RemoveSigner(byte[] signature, string signerId)
+    {
+        var parsed = Parse(Normalize(signature));
+        if (!parsed.Signers.Any(s => s.SidKey == signerId))
+            throw new InvalidOperationException("Выбранного подписанта нет в этом файле подписи.");
+        parsed.Signers.RemoveAll(s => s.SidKey == signerId);
+        if (parsed.Signers.Count == 0)
+            throw new InvalidOperationException("Нельзя исключить последнего подписанта: подпись станет пустой.");
+        return BuildMerged(new List<ParsedSignedData> { parsed });
     }
 
     /// <summary>

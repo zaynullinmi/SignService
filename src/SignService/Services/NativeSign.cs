@@ -80,6 +80,44 @@ internal static class NativeSign
         byte[]? pbSignedBlob,
         ref uint pcbSignedBlob);
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CryptVerifyMessagePara
+    {
+        public uint cbSize;
+        public uint dwMsgAndCertEncodingType;
+        public IntPtr hCryptProv;
+        public IntPtr pfnGetSignerCertificate;
+        public IntPtr pvGetArg;
+    }
+
+    [DllImport("crypt32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CryptVerifyDetachedMessageSignature(
+        ref CryptVerifyMessagePara verifyPara, uint signerIndex,
+        byte[] signature, uint signatureSize, uint contentCount,
+        IntPtr[] contents, uint[] contentSizes, IntPtr signerCertificate);
+
+    public static void VerifyDetached(byte[] signature, byte[] document, uint signerIndex)
+    {
+        var dataHandle = GCHandle.Alloc(document, GCHandleType.Pinned);
+        try
+        {
+            var para = new CryptVerifyMessagePara
+            {
+                cbSize = (uint)Marshal.SizeOf<CryptVerifyMessagePara>(),
+                dwMsgAndCertEncodingType = MsgEncoding,
+            };
+            if (!CryptVerifyDetachedMessageSignature(ref para, signerIndex,
+                signature, (uint)signature.Length, 1,
+                new[] { dataHandle.AddrOfPinnedObject() }, new[] { (uint)document.Length }, IntPtr.Zero))
+                throw new System.Security.Cryptography.CryptographicException(Marshal.GetLastWin32Error());
+        }
+        finally
+        {
+            dataHandle.Free();
+        }
+    }
+
     /// <summary>Подписанный (authenticated) атрибут: OID и DER-байты значения.</summary>
     public readonly record struct AuthAttribute(string Oid, byte[] DerValue);
 

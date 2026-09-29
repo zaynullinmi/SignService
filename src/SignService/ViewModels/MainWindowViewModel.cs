@@ -154,6 +154,8 @@ public partial class MainWindowViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(ExtractCommand))]
     [NotifyCanExecuteChangedFor(nameof(MergeFilesCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildContainerCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SplitSignaturesCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RemoveSignerCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -204,6 +206,9 @@ public partial class MainWindowViewModel : ObservableObject
     /// <summary>Запрос диалога выбора документа для сборки криптоконтейнера.</summary>
     public event EventHandler? BuildContainerRequested;
 
+    public event EventHandler? SplitSignaturesRequested;
+    public event EventHandler? RemoveSignerRequested;
+
     /// <summary>
     /// Запрос пароля у пользователя (заголовок, сообщение, предупреждение или null,
     /// требуется ли повторный ввод). Возвращает пароль или null при отмене.
@@ -224,6 +229,9 @@ public partial class MainWindowViewModel : ObservableObject
             return;
         _settings.SignCertThumbprint = value.Thumbprint;
         _settings.Save();
+        // Смена сертификата позволяет соподписать уже обработанные файлы.
+        foreach (var file in Files.Where(f => f.Status == SignStatus.Signed))
+            file.ResetForSigning();
     }
 
     partial void OnIsDetachedChanged(bool value)
@@ -669,6 +677,46 @@ public partial class MainWindowViewModel : ObservableObject
 
     [RelayCommand(CanExecute = nameof(CanBrowse))]
     private void BuildContainer() => BuildContainerRequested?.Invoke(this, EventArgs.Empty);
+
+    [RelayCommand(CanExecute = nameof(CanBrowse))]
+    private void SplitSignatures() => SplitSignaturesRequested?.Invoke(this, EventArgs.Empty);
+
+    [RelayCommand(CanExecute = nameof(CanBrowse))]
+    private void RemoveSigner() => RemoveSignerRequested?.Invoke(this, EventArgs.Empty);
+
+    public async Task SplitSignatureFilesAsync(IReadOnlyList<string> paths)
+    {
+        IsBusy = true;
+        try
+        {
+            foreach (var path in paths)
+            {
+                try
+                {
+                    var result = await Task.Run(() => CmsExtractor.SplitSignatureFile(path));
+                    StatusText = $"«{System.IO.Path.GetFileName(path)}»: создано отдельных подписей: {result.SignerFiles.Count}"
+                        + (result.DocumentPath is null ? "." : $"; документ: {System.IO.Path.GetFileName(result.DocumentPath)}.");
+                }
+                catch (Exception e)
+                {
+                    StatusText = $"«{System.IO.Path.GetFileName(path)}»: {e.Message}";
+                }
+            }
+        }
+        finally { IsBusy = false; }
+    }
+
+    public async Task RemoveSignerFromFileAsync(string path, string signerId)
+    {
+        IsBusy = true;
+        try
+        {
+            var result = await Task.Run(() => CmsExtractor.RemoveSignerFromFile(path, signerId));
+            StatusText = $"Подписант исключён → «{System.IO.Path.GetFileName(result.OutputPath)}», осталось подписантов: {result.SignerCount}. Исходный файл сохранён.";
+        }
+        catch (Exception e) { StatusText = "Не удалось исключить подписанта: " + e.Message; }
+        finally { IsBusy = false; }
+    }
 
     /// <summary>
     /// Собирает прикреплённый криптоконтейнер (документ + имеющиеся подписи)

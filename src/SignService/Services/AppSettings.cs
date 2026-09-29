@@ -17,6 +17,18 @@ public class AppSettings
 
     private static readonly string SettingsPath = Path.Combine(SettingsDir, "settings.json");
 
+    private readonly string _settingsDirectory = SettingsDir;
+    private readonly string _settingsPath = SettingsPath;
+
+    public AppSettings() { }
+
+    /// <summary>Изолированное хранилище настроек (например, для интеграционных тестов).</summary>
+    public AppSettings(string settingsDirectory)
+    {
+        _settingsDirectory = Path.GetFullPath(settingsDirectory);
+        _settingsPath = Path.Combine(_settingsDirectory, "settings.json");
+    }
+
     /// <summary>Отпечаток сертификата подписи по умолчанию.</summary>
     public string? SignCertThumbprint { get; set; }
 
@@ -85,8 +97,8 @@ public class AppSettings
     {
         try
         {
-            Directory.CreateDirectory(SettingsDir);
-            File.WriteAllText(SettingsPath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+            Directory.CreateDirectory(_settingsDirectory);
+            File.WriteAllText(_settingsPath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch
         {

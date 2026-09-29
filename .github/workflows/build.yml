@@ -2,8 +2,10 @@ name: Build
 
 on:
   push:
-    branches: ["main", "claude/**"]
+    branches: ["main", "claude/**", "codex/**"]
     tags: ["v*"]
+  pull_request:
+    branches: ["main"]
   workflow_dispatch:
     inputs:
       release_tag:
@@ -30,6 +32,7 @@ jobs:
 
   build-windows:
     name: Windows x64 exe
+    needs: tests
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +40,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+
+      - name: Run Windows test suite (CryptoAPI and update rollback)
+        run: dotnet run --project tests/SignService.Tests -c Release
 
       - name: Publish self-contained single-file exe
         run: >

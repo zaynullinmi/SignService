@@ -1,0 +1,16 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="SignService.Views.SignerDialog"
+        Width="560" Height="360" MinWidth="420" MinHeight="280"
+        WindowStartupLocation="CenterOwner" Title="Исключить подписанта">
+    <Grid Margin="16" RowDefinitions="Auto,*,Auto,Auto" RowSpacing="12">
+        <TextBlock Text="Выберите подписанта, которого нужно исключить:" TextWrapping="Wrap"/>
+        <ListBox Grid.Row="1" Name="SignersList" SelectionMode="Single"/>
+        <TextBlock Grid.Row="2" Text="Будет создан новый файл подписи. Остальные подписи и вложенный документ сохранятся. Исходный файл останется без изменений."
+                   TextWrapping="Wrap"/>
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button Name="CancelButton" Content="Отмена" MinWidth="90"/>
+            <Button Name="RemoveButton" Content="Исключить" Classes="accent" MinWidth="110" IsEnabled="False"/>
+        </StackPanel>
+    </Grid>
+</Window>

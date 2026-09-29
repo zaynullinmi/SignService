@@ -2,8 +2,8 @@
 // нормализация BER, извлечение из контейнера, штамп времени (CAdES-T, локальный
 // TSA-ответчик на openssl), визуальный штамп на PDF и объединение без подписания.
 // Запуск: dotnet run --project tests/SignService.Tests -c Release
-// Криптография — managed-путь (RSA); нативный ГОСТ-путь (CryptSignMessage)
-// проверяется вручную на Windows с КриптоПро.
+// Криптография — RSA: CryptoAPI на Windows, managed-путь на Linux/macOS.
+// ГОСТ проверяется вручную на Windows с КриптоПро и реальным сертификатом.
 using System.Diagnostics;
 using System.Linq;
 using System.Net;
@@ -475,8 +475,9 @@ catch (ArgumentException)
 }
 
 // ===== 13. Хранилище сертификатов на компьютере (PFX с паролем) =====
-var vault = new CertificateVault();
-var vaultSettings = new AppSettings(); // пишет в реальный %AppData% — тестовые записи чистим ниже
+var vaultDir = Path.Combine(tempRoot, "certificates");
+var vault = new CertificateVault(vaultDir);
+var vaultSettings = new AppSettings(Path.Combine(tempRoot, "settings"));
 
 var savedInfo = vault.Save(cert, "test-пароль-123", vaultSettings);
 if (savedInfo.Thumbprint != cert.Thumbprint || savedInfo.Subject != "Тестовый Пользователь")
@@ -562,9 +563,7 @@ catch (InvalidOperationException e) when (e.Message.Contains("не был уст
 }
 
 // удаление: файл затёрт и удалён, запись убрана
-var pfxPath = Path.Combine(
-    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-    "SignService", "certificates", savedInfo.FileName);
+var pfxPath = Path.Combine(vaultDir, savedInfo.FileName);
 if (!File.Exists(pfxPath)) throw new Exception("pfx file missing before delete");
 vault.Delete(savedInfo, vaultSettings);
 if (File.Exists(pfxPath)) throw new Exception("pfx file must be deleted");
@@ -738,6 +737,8 @@ var poaCms = new SignedCms(new ContentInfo(payload), detached: true);
 poaCms.Decode(await File.ReadAllBytesAsync(poaSignResult.SignaturePath));
 poaCms.CheckSignature(verifySignatureOnly: true);
 Console.WriteLine("sign with POA: signature valid, EMCHD xml+sig copied next to document: OK");
+
+await ReviewRegressionTests.RunAsync(tempRoot, signer);
 
 try { Directory.Delete(tempRoot, true); } catch { }
 Console.WriteLine("ALL TESTS PASSED");
