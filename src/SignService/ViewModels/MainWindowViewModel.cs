@@ -154,6 +154,7 @@ public partial class MainWindowViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(ExtractCommand))]
     [NotifyCanExecuteChangedFor(nameof(MergeFilesCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildContainerCommand))]
+    [NotifyCanExecuteChangedFor(nameof(VerifySignatureCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -203,6 +204,8 @@ public partial class MainWindowViewModel : ObservableObject
 
     /// <summary>Запрос диалога выбора документа для сборки криптоконтейнера.</summary>
     public event EventHandler? BuildContainerRequested;
+
+    public event EventHandler? VerifySignatureRequested;
 
     /// <summary>
     /// Запрос пароля у пользователя (заголовок, сообщение, предупреждение или null,
@@ -313,7 +316,7 @@ public partial class MainWindowViewModel : ObservableObject
         try
         {
             var info = PowerOfAttorneyService.Parse(xmlPath, sigPath);
-            var check = PowerOfAttorneyService.Validate(info, SelectedCertificate?.Certificate);
+            var check = PowerOfAttorneyService.Validate(info, SelectedCertificate?.Certificate, _settings.CreateVerificationOptions());
 
             if (check.State == PowerOfAttorneyService.CheckState.Error)
             {
@@ -670,6 +673,9 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanBrowse))]
     private void BuildContainer() => BuildContainerRequested?.Invoke(this, EventArgs.Empty);
 
+    [RelayCommand(CanExecute = nameof(CanBrowse))]
+    private void VerifySignature() => VerifySignatureRequested?.Invoke(this, EventArgs.Empty);
+
     /// <summary>
     /// Собирает прикреплённый криптоконтейнер (документ + имеющиеся подписи)
     /// без создания своей подписи.
@@ -852,19 +858,6 @@ public partial class MainWindowViewModel : ObservableObject
             return;
         }
 
-        // Перед подписанием с МЧД перепроверяем её против фактического сертификата.
-        if (Poa is { } poaCheck)
-        {
-            var check = PowerOfAttorneyService.Validate(poaCheck, certificate);
-            if (check.State == PowerOfAttorneyService.CheckState.Error)
-            {
-                StatusText = "Подписание остановлено — проблема с МЧД: " + check.Message;
-                return;
-            }
-            if (check.State == PowerOfAttorneyService.CheckState.Warning)
-                Log("⚠ МЧД: " + check.Message);
-        }
-
         IsBusy = true;
 
         var signed = 0;
@@ -872,6 +865,18 @@ public partial class MainWindowViewModel : ObservableObject
 
         try
         {
+            var poaVerificationOptions = Poa is null ? null : _settings.CreateVerificationOptions();
+            // Перед подписанием с МЧД перепроверяем её против фактического сертификата.
+            if (Poa is { } poaCheck)
+            {
+                var check = await Task.Run(() => PowerOfAttorneyService.Validate(poaCheck, certificate, poaVerificationOptions));
+                if (check.State == PowerOfAttorneyService.CheckState.Error)
+                {
+                    StatusText = "Подписание остановлено — проблема с МЧД: " + check.Message;
+                    return;
+                }
+                if (check.State == PowerOfAttorneyService.CheckState.Warning) Log("⚠ МЧД: " + check.Message);
+            }
             foreach (var file in Files.Where(f => f.Status != SignStatus.Signed).ToList())
             {
                 file.Status = SignStatus.Signing;
@@ -893,6 +898,7 @@ public partial class MainWindowViewModel : ObservableObject
                         StampWithDate = StampWithDate,
                         StampLogoPath = StampLogoPath,
                         PowerOfAttorney = Poa,
+                        PoaVerificationOptions = poaVerificationOptions,
                     };
                     var result = await Task.Run(
                         () => _documentSigner.SignFileAsync(file.FilePath, certificate, options));
@@ -924,6 +930,11 @@ public partial class MainWindowViewModel : ObservableObject
                     Log($"  [ОШИБКА] {file.FileName}: {ex.Message}");
                 }
             }
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Подписание остановлено: " + ex.Message;
+            return;
         }
         finally
         {

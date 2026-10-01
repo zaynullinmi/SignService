@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Linq;
 
 namespace SignService.Services;
 
@@ -65,6 +66,18 @@ public class AppSettings
 
     /// <summary>Путь к подписи руководителя (.sig) для МЧД.</summary>
     public string? PoaSigPath { get; set; }
+
+    /// <summary>Дополнительные явно доверенные корни; хранилище ОС не изменяется.</summary>
+    public List<string> VerificationTrustedRootPaths { get; set; } = new();
+
+    /// <summary>Разрешение запросов CRL/OCSP при проверке ЭЦП.</summary>
+    public bool VerificationAllowNetwork { get; set; }
+
+    public VerificationOptions CreateVerificationOptions(bool allowNetwork = false) => new()
+    {
+        TrustedRoots = VerificationTrustedRootPaths.Select(File.ReadAllBytes).ToArray(),
+        AllowNetwork = allowNetwork,
+    };
 
     public static AppSettings Load()
     {

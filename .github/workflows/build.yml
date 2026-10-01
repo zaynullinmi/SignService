@@ -4,6 +4,7 @@ on:
   push:
     branches: ["main", "claude/**"]
     tags: ["v*"]
+  pull_request:
   workflow_dispatch:
     inputs:
       release_tag:
@@ -12,7 +13,7 @@ on:
         default: ""
 
 permissions:
-  contents: write   # публикация GitHub Release на тег v*
+  contents: read
 
 jobs:
   tests:
@@ -30,7 +31,10 @@ jobs:
 
   build-windows:
     name: Windows x64 exe
+    needs: tests
     runs-on: windows-latest
+    permissions:
+      contents: write   # publication on a version tag or an explicitly requested release
     steps:
       - uses: actions/checkout@v4
 
@@ -60,5 +64,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.release_tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
           files: publish/SignService.exe
           body_path: CHANGELOG.md

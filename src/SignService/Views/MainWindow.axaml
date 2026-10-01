@@ -218,6 +218,8 @@
                     ToolTip.Tip="Операции с подписями без подписания: извлечение, объединение, сборка контейнера, штамп">
                 <Button.Flyout>
                     <MenuFlyout>
+                        <MenuItem Header="Проверить ЭЦП… (включая ГОСТ без КриптоПро)"
+                                  Command="{Binding VerifySignatureCommand}"/>
                         <MenuItem Header="Извлечь из .sig… (документ и подписи из контейнера)"
                                   Command="{Binding ExtractCommand}"/>
                         <MenuItem Header="Объединить .sig… (несколько подписей в одну)"

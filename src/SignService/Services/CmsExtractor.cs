@@ -102,7 +102,7 @@ public static class CmsExtractor
             : firstName;
 
         var outputPath = UniquePath(directory, $"{baseName} (объединённая).sig", paths);
-        File.WriteAllBytes(outputPath, merged);
+        AtomicFile.Write(outputPath, merged);
 
         return new MergeFilesResult(
             outputPath, info.SignerNames.Count, info.HasContent, documentNote, excluded, unverified);
@@ -143,7 +143,7 @@ public static class CmsExtractor
             directory,
             Path.GetFileName(documentPath) + " (контейнер).sig",
             paths.Append(documentPath).ToList());
-        File.WriteAllBytes(outputPath, container);
+        AtomicFile.Write(outputPath, container);
 
         return new BuildContainerResult(
             outputPath, merged.SignerCount, merged.ExcludedSigners, merged.UnverifiedSigners);

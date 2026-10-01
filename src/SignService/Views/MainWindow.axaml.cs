@@ -38,6 +38,7 @@ public partial class MainWindow : Window
                 vm.StampOnlyRequested += async (_, _) => await BrowseStampOnlyAsync(vm);
                 vm.BuildContainerRequested += async (_, _) => await BrowseBuildContainerAsync(vm);
                 vm.AddPoaRequested += async (_, _) => await BrowsePoaAsync(vm);
+                vm.VerifySignatureRequested += async (_, _) => await new VerificationDialog(vm.Settings).ShowDialog(this);
                 vm.PropertyChanged += (_, args) =>
                 {
                     // автопрокрутка лога вниз

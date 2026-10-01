@@ -10,7 +10,7 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <AssemblyTitle>SignService — подписание документов ЭЦП</AssemblyTitle>
     <Product>SignService</Product>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Authors>Зайнуллин Марат Илгамович</Authors>
     <Company>Зайнуллин Марат Илгамович</Company>
     <Copyright>© 2026 Зайнуллин Марат Илгамович, +7-963-694-2461, zaynullinmi@gmail.com</Copyright>
@@ -26,6 +26,7 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
     <PackageReference Include="PDFsharp" Version="6.2.4" />
     <PackageReference Include="System.Security.Cryptography.Pkcs" Version="8.0.1" />
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
   </ItemGroup>
 
   <ItemGroup>

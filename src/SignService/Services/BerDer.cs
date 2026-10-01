@@ -20,13 +20,14 @@ internal static class BerDer
     public static byte[] ToDefinite(ReadOnlySpan<byte> input)
     {
         var output = new MemoryStream();
-        ConvertValue(input, output);
+        ConvertValue(input, output, 0);
         return output.ToArray();
     }
 
     // Перекодирует один TLV из s в output; возвращает число прочитанных байтов.
-    private static int ConvertValue(ReadOnlySpan<byte> s, MemoryStream output)
+    private static int ConvertValue(ReadOnlySpan<byte> s, MemoryStream output, int depth)
     {
+        if (depth > 128) throw new AsnContentException("Превышена допустимая вложенность ASN.1.");
         if (s.Length < 2)
             throw new AsnContentException("Обрезанные ASN.1-данные.");
 
@@ -66,7 +67,7 @@ internal static class BerDer
                     break;
                 }
 
-                p += ConvertValue(s[p..], inner);
+                p += ConvertValue(s[p..], inner, depth + 1);
             }
 
             content = inner.ToArray();
@@ -88,7 +89,7 @@ internal static class BerDer
                     length = (length << 8) | s[p++];
             }
 
-            if (p + length > s.Length)
+            if (length < 0 || length > s.Length - p)
                 throw new AsnContentException("Длина ASN.1-значения выходит за пределы данных.");
 
             if (constructed)
@@ -97,7 +98,7 @@ internal static class BerDer
                 var children = s.Slice(p, length);
                 var q = 0;
                 while (q < children.Length)
-                    q += ConvertValue(children[q..], inner);
+                    q += ConvertValue(children[q..], inner, depth + 1);
                 content = inner.ToArray();
             }
             else

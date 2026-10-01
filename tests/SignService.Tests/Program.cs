@@ -475,6 +475,8 @@ catch (ArgumentException)
 }
 
 // ===== 13. Хранилище сертификатов на компьютере (PFX с паролем) =====
+if (!args.Contains("--skip-user-store"))
+{
 var vault = new CertificateVault();
 var vaultSettings = new AppSettings(); // пишет в реальный %AppData% — тестовые записи чистим ниже
 
@@ -571,6 +573,8 @@ if (File.Exists(pfxPath)) throw new Exception("pfx file must be deleted");
 if (vault.List(vaultSettings).Any(c => c.Thumbprint == savedInfo.Thumbprint))
     throw new Exception("saved record must be removed");
 Console.WriteLine("cert vault: delete wipes file and record: OK");
+}
+else Console.WriteLine("cert vault: skipped (--skip-user-store; no user data or certificate store changes)");
 
 // ===== 14. Сборка криптоконтейнера без подписания =====
 var bDir = Path.Combine(tempRoot, "build_container");
@@ -660,7 +664,7 @@ await File.WriteAllTextAsync(poaXmlPath, $"""
     <?xml version="1.0" encoding="UTF-8"?>
     <Доверенность xmlns="urn://x-artefacts/EMCHD_1" ВерсФорм="EMCHD_1">
       <Документ><Довер>
-        <СвДов СрокДейст="{poaValidTo}" ДатаВыдДовер="2026-07-09" НомДовер="b24f0fb1-3ee0-4b50-bb84-da89832ac7c2"/>
+        <СвДов СрокДейст="{poaValidTo}" ДатаВыдДовер="{DateTime.Today.AddDays(-1):yyyy-MM-dd}" НомДовер="b24f0fb1-3ee0-4b50-bb84-da89832ac7c2"/>
         <СвДоверит ТипДоверит="1"><Доверит><РосОргДовер>
           <СвРосОрг ОГРН="1262300003151" ИННЮЛ="2301119162" НаимОрг="ООО ВЕКТОР"/>
           <ЛицоБезДов><СвФЛ Должность="Директор" СНИЛС="999-999-999 99" ИННФЛ="999999999999">
@@ -697,7 +701,7 @@ using var repCert = MakeRepCert("771378577706", "14350728243");
 using var strangerCert = MakeRepCert("111111111111", "11111111111");
 
 var okCheck = PowerOfAttorneyService.Validate(poaInfo, repCert);
-if (okCheck.State != PowerOfAttorneyService.CheckState.Ok) throw new Exception("poa validate must pass: " + okCheck.Message);
+if (okCheck.State != PowerOfAttorneyService.CheckState.Warning) throw new Exception("untrusted head cert must produce warning: " + okCheck.Message);
 var strangerCheck = PowerOfAttorneyService.Validate(poaInfo, strangerCert);
 if (strangerCheck.State != PowerOfAttorneyService.CheckState.Error) throw new Exception("stranger cert must fail");
 Console.WriteLine("POA validate: representative match / mismatch by INN+SNILS: OK");
@@ -739,6 +743,7 @@ poaCms.Decode(await File.ReadAllBytesAsync(poaSignResult.SignaturePath));
 poaCms.CheckSignature(verifySignatureOnly: true);
 Console.WriteLine("sign with POA: signature valid, EMCHD xml+sig copied next to document: OK");
 
+await VerificationTests.RunAsync(tempRoot);
 try { Directory.Delete(tempRoot, true); } catch { }
 Console.WriteLine("ALL TESTS PASSED");
 return 0;

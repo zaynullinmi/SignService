@@ -1,0 +1,40 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="SignService.Views.VerificationDialog"
+        Title="Проверка электронной подписи" Width="900" Height="700"
+        MinWidth="640" MinHeight="480" WindowStartupLocation="CenterOwner">
+    <Grid Margin="16" RowDefinitions="Auto,Auto,*,Auto" RowSpacing="12">
+        <StackPanel Name="OptionsPanel" Spacing="8">
+            <TextBlock Text="Проверка CMS/CAdES, RSA, ECDSA и ГОСТ без КриптоПро." TextWrapping="Wrap"/>
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                <Button Name="SignatureButton" Content="Выбрать подпись…"/>
+                <TextBlock Name="SignaturePathText" Grid.Column="1" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+            </Grid>
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                <Button Name="DocumentButton" Content="Исходный документ…"/>
+                <TextBlock Name="DocumentPathText" Grid.Column="1" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                <Button Name="ClearDocumentButton" Grid.Column="2" Content="Убрать"/>
+            </Grid>
+            <WrapPanel>
+                <Button Name="RootsButton" Content="Доверенные корни…" Margin="0,0,8,4"
+                        ToolTip.Tip="Дополнительные корни доверия только для SignService. Выбирайте сертификаты доверенных УЦ. Вложенный в подпись корень автоматически не считается доверенным."/>
+                <Button Name="ClearRootsButton" Content="Убрать корни" Margin="0,0,8,4"/>
+                <Button Name="EvidenceButton" Content="CRL / OCSP из файлов…" Margin="0,0,8,4"/>
+                <TextBlock Name="EvidenceText" VerticalAlignment="Center"/>
+            </WrapPanel>
+            <TextBlock Name="RootsText" TextWrapping="Wrap"/>
+            <CheckBox Name="NetworkCheckBox" Content="Разрешить сетевые запросы CRL/OCSP к службам УЦ"
+                      ToolTip.Tip="Без сети используются вложенные CRL и выбранные файлы. Отсутствие свежего ответа отображается как неопределённый статус отзыва."/>
+        </StackPanel>
+        <TextBlock Name="StatusText" Grid.Row="1" Text="Выберите подпись; для откреплённой подписи нужен исходный файл." TextWrapping="Wrap"/>
+        <TextBox Name="ReportBox" Grid.Row="2" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto"/>
+        <WrapPanel Grid.Row="3" HorizontalAlignment="Right">
+            <Button Name="VerifyButton" Content="Проверить" Margin="0,0,8,4"/>
+            <Button Name="CancelButton" Content="Отменить проверку" IsEnabled="False" Margin="0,0,8,4"/>
+            <Button Name="CopyButton" Content="Скопировать отчёт" Margin="0,0,8,4"/>
+            <Button Name="SaveButton" Content="Сохранить отчёт…" Margin="0,0,8,4"/>
+            <Button Name="CloseButton" Content="Закрыть" Margin="0,0,0,4"/>
+        </WrapPanel>
+    </Grid>
+</Window>

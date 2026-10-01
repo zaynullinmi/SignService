@@ -43,14 +43,19 @@ is published on the [Releases](https://github.com/zaynullinmi/SignService/releas
   a signature file onto the window;
 - re-signing with the same certificate **replaces** your previous signature
   instead of duplicating it;
-- every merged signature is **verified against the document hash**
-  (messageDigest; Streebog for GOST): signatures made over a different file
-  or an older revision are excluded automatically, reporting the signer name;
+- every merged signature is **cryptographically verified**, including the
+  document digest, signature value and CAdES certificate binding. Damaged
+  signatures and signatures over another revision are excluded; unverifiable
+  signers are explicitly reported;
 - input signatures are accepted in DER/BER (including indefinite lengths and
   trailing bytes) and base64/PEM.
 
 ### Tools (no signature created)
 
+- **Verify signature…** — per-signer CMS/CAdES verification for GOST-2001,
+  GOST-2012 256/512, RSA and ECDSA without CryptoPro. Select the original for
+  a detached signature; attached signatures use the embedded document.
+  Copy or export the detailed report to TXT;
 - **Merge .sig…** — combine several signature files into one containing all
   signers (attached containers are accepted; the embedded document is kept);
 - **Extract from .sig…** — pull out of a container: the embedded document
@@ -65,8 +70,8 @@ is published on the [Releases](https://github.com/zaynullinmi/SignService/releas
 - the "Add power of attorney…" button works like Kontur: pick the MChD XML
   (EMCHD_1 format) and the head's signature (.sig; a neighbouring
   `name.xml.sig` is picked up automatically);
-- the app verifies: the head's signature matches the MChD file (by hash,
-  Streebog for GOST), the validity period has not expired, and the
+- the app verifies the head's signature using the certificate public key,
+  checks the validity period and matches the
   representative in the MChD matches the selected certificate by INN/SNILS;
 - when signing, the MChD files (XML + .sig) are copied next to the signed
   document (the MChD is NOT embedded into the CMS signature — Kontur does
@@ -108,11 +113,37 @@ is published on the [Releases](https://github.com/zaynullinmi/SignService/releas
 - **auto-update**: new releases are checked on GitHub Releases at startup
   (can be disabled) and installed in one click from the About window (Windows).
 
+### Trust, revocation and timestamps
+
+The report separates document integrity, signature value, certificate binding,
+certificate trust, revocation and TSA results. An embedded root never creates
+trust: anchors come from OS root stores and explicitly selected CA certificates.
+BouncyCastle verifies certificate-chain, CRL and OCSP signatures without a CSP.
+
+Verification is offline by default. It uses embedded CRLs and selected `.crl`/
+`.ocsp` files; HTTP(S) CRL/OCSP requests require the network checkbox. Revocation
+is checked for every chain certificate except the trust anchor. Missing, stale,
+unverifiable or partial evidence (including delta/indirect CRLs) gives an unknown
+status. Missing intermediate certificates must be embedded in the CMS or in OS
+intermediate stores.
+
+The signer's `signing-time` does not prove when a signature was created.
+Historical certificate validity is assessed only using a TSA timestamp whose
+imprint, signature, trust and required revocation checks passed. TSA responses
+also must match the request and nonce.
+
+MChD verification re-reads current files, verifies and copies the same XML/SIG
+snapshot. Conflicting destination files stop signing before the signature is
+saved. Cryptographic verification does not establish the head's authority,
+the scope of delegated powers or MChD registry revocation; missing assurances
+are reported as warnings.
+
 ## Requirements
 
 - Windows 10/11 — the self-contained exe from the Releases page;
-- for GOST signatures — **CryptoPro CSP** installed with a personal
+- to **create** GOST signatures — **CryptoPro CSP** installed with a personal
   certificate;
+- verifying and merging GOST signatures requires **no CryptoPro** on Windows/Linux/macOS;
 - building from source: .NET 8 SDK (Windows/Linux/macOS; outside Windows
   signing is limited to platform algorithms — RSA/ECDSA; GOST requires
   the CSP on Windows).
@@ -124,6 +155,11 @@ dotnet build SignService.sln -c Release
 dotnet run --project src/SignService
 dotnet run --project tests/SignService.Tests -c Release   # tests
 ```
+
+On a personal workstation append `-- --skip-user-store` to the test command to
+skip scenarios that change user certificate stores or application data. CI runs
+the full suite in an isolated runner. Managed GOST, CRL/OCSP and TSA verification
+tests run without CryptoPro or OpenSSL.
 
 Publishing the self-contained exe:
 

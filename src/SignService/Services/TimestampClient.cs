@@ -4,6 +4,10 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
+using System.IO;
+using Org.BouncyCastle.Tsp;
+using Org.BouncyCastle.Math;
+using Org.BouncyCastle.Security;
 
 namespace SignService.Services;
 
@@ -31,6 +35,8 @@ public class TimestampClient
     public virtual async Task<byte[]> RequestTokenAsync(
         byte[] signatureValue, bool gost, string tsaUrl, CancellationToken cancellationToken = default)
     {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
         byte[] hash;
         string hashOid;
         if (gost)
@@ -49,20 +55,20 @@ public class TimestampClient
         // старший байт без знакового бита — некоторые TSA не принимают отрицательный nonce
         nonce[0] &= 0x7F;
 
-        var request = System.Security.Cryptography.Pkcs.Rfc3161TimestampRequest.CreateFromHash(
-            hash,
-            new Oid(hashOid),
-            nonce: nonce,
-            requestSignerCertificates: true);
+        var generator = new TimeStampRequestGenerator();
+        generator.SetCertReq(true);
+        var request = generator.Generate(hashOid, hash, new BigInteger(1, nonce));
 
-        using var content = new ByteArrayContent(request.Encode());
+        using var content = new ByteArrayContent(request.GetEncoded());
         content.Headers.ContentType = new MediaTypeHeaderValue("application/timestamp-query");
 
         HttpResponseMessage response;
         try
         {
-            response = await Http.PostAsync(tsaUrl, content, cancellationToken);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, tsaUrl) { Content = content };
+            response = await Http.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
         {
             throw new InvalidOperationException(
@@ -75,17 +81,39 @@ public class TimestampClient
                 throw new InvalidOperationException(
                     $"Служба штампов времени вернула ошибку HTTP {(int)response.StatusCode} ({tsaUrl}).");
 
-            var body = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+            const int maxBytes = 4 * 1024 * 1024;
+            if (response.Content.Headers.ContentLength > maxBytes)
+                throw new InvalidOperationException("Ответ TSA превышает допустимый размер.");
+            await using var input = await response.Content.ReadAsStreamAsync(deadline.Token);
+            using var output = new MemoryStream();
+            var buffer = new byte[8192];
+            int count;
+            while ((count = await input.ReadAsync(buffer, deadline.Token)) != 0)
+            {
+                if (output.Length + count > maxBytes) throw new InvalidOperationException("Ответ TSA превышает допустимый размер.");
+                output.Write(buffer, 0, count);
+            }
             try
             {
-                var token = request.ProcessResponse(body, out _);
-                return token.AsSignedCms().Encode();
+                return ValidateResponse(output.ToArray(), request, signatureValue);
             }
-            catch (CryptographicException e)
+            catch (Exception e) when (e is not OperationCanceledException)
             {
                 throw new InvalidOperationException(
                     "Служба штампов времени вернула некорректный ответ: " + e.Message, e);
             }
         }
+    }
+
+    internal static byte[] ValidateResponse(byte[] responseBytes, TimeStampRequest request, byte[] signatureValue)
+    {
+        var response = new TimeStampResponse(responseBytes);
+        response.Validate(request); // status, nonce, policy, digest algorithm and message imprint
+        var token = response.TimeStampToken ?? throw new CryptographicException("TSA не вернула метку времени.");
+        var encoded = token.GetEncoded();
+        var check = SignatureVerifier.VerifyTimestampToken(encoded, signatureValue, VerificationOptions.CryptographyOnly);
+        if (check.Check.State != VerificationState.Valid) throw new CryptographicException(check.Check.Message);
+        // This proves token integrity. TSA trust/revocation is a separate result in the verification report.
+        return encoded;
     }
 }
