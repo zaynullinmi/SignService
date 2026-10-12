@@ -48,6 +48,9 @@ public partial class SignFileItem : ObservableObject
     private readonly List<string> _extraSignatures = new();
     private IReadOnlyList<SignatureDiscovery.SignatureMatch> _discovered = Array.Empty<SignatureDiscovery.SignatureMatch>();
     private bool _adjustingSelection;
+    private bool _mentionBackup;
+    private bool _followingShared;
+    private bool _sharedWantsAdd;
     private int _unionCount;
     private string _planText = "будет создан новый файл подписи";
 
@@ -143,9 +146,20 @@ public partial class SignFileItem : ObservableObject
     [ObservableProperty]
     private CoSignOption? _selectedCoSignOption;
 
+    /// <summary>Режим задаёт первый файл («Применить ко всем») — список в этой строке только для чтения.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanChooseCoSign))]
+    private bool _coSignLocked;
+
+    /// <summary>Общий режим «добавить» для этого файла невозможен.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(WarningDisplay))]
+    [NotifyPropertyChangedFor(nameof(HasWarning))]
+    private bool _sharedAddUnavailable;
+
     /// <summary>Режим можно менять, пока файл ждёт подписания и программа не занята.</summary>
     public bool CanChooseCoSign => Status is SignStatus.Pending or SignStatus.Failed && !IsDiscovering && !SignsStampedCopy
-        && Owner?.IsBusy != true;
+        && !CoSignLocked && Owner?.IsBusy != true;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasExtra))]
@@ -177,7 +191,9 @@ public partial class SignFileItem : ObservableObject
             CoSignOptions.Add(new CoSignOption(match.Path, match.SignerCount));
         CoSignOptions.Add(new CoSignOption(null, 0));
 
-        if (pinned && previous is null)
+        if (_followingShared)
+            ApplySharedSelection();
+        else if (pinned && previous is null)
             SelectedCoSignOption = CoSignOptions.Last(option => option.CreateNew);
         else if (pinned)
             SelectedCoSignOption = CoSignOptions.FirstOrDefault(option =>
@@ -189,6 +205,40 @@ public partial class SignFileItem : ObservableObject
                 ? CoSignOptions.FirstOrDefault(option => !option.CreateNew) ?? CoSignOptions.Last()
                 : CoSignOptions.Last(option => option.CreateNew);
         _adjustingSelection = false;
+        UpdatePlan();
+    }
+
+    /// <summary>Упоминать ли в плане, что перед потерей данных сохранится .bak.</summary>
+    public void SetBackupMention(bool enabled)
+    {
+        if (_mentionBackup == enabled)
+            return;
+        _mentionBackup = enabled;
+        UpdatePlan();
+    }
+
+    /// <summary>
+    /// Повторяет режим первого файла. Если добавить не к чему, остаётся «Создать новую»
+    /// и строка явно об этом говорит.
+    /// </summary>
+    public void FollowSharedMode(bool addToExisting)
+    {
+        _followingShared = true;
+        _sharedWantsAdd = addToExisting;
+        CoSignPinned = false;
+        _adjustingSelection = true;
+        ApplySharedSelection();
+        _adjustingSelection = false;
+        UpdatePlan();
+    }
+
+    /// <summary>Снимает общий режим, не меняя уже выбранный пункт.</summary>
+    public void StopFollowingSharedMode()
+    {
+        _followingShared = false;
+        if (!SharedAddUnavailable)
+            return;
+        SharedAddUnavailable = false;
         UpdatePlan();
     }
 
@@ -312,6 +362,25 @@ public partial class SignFileItem : ObservableObject
         if (!_adjustingSelection && value is not null)
             CoSignPinned = true;
         UpdatePlan();
+        if (!_adjustingSelection && value is not null)
+            Owner?.NotifyCoSignSelectionChanged(this);
+    }
+
+    private void ApplySharedSelection()
+    {
+        var add = _sharedWantsAdd && !SignsStampedCopy
+            ? CoSignOptions.FirstOrDefault(option => !option.CreateNew)
+            : null;
+        if (add is null)
+        {
+            SelectedCoSignOption = CoSignOptions.LastOrDefault(option => option.CreateNew) ?? CoSignOptions.LastOrDefault();
+            SharedAddUnavailable = _sharedWantsAdd;
+        }
+        else
+        {
+            SelectedCoSignOption = add;
+            SharedAddUnavailable = false;
+        }
     }
 
     private void UpdatePlan()
@@ -341,6 +410,8 @@ public partial class SignFileItem : ObservableObject
                 $"будет добавлена подпись №{baseCount + 1} к «{Path.GetFileName(path)}» ({SelectedCoSignOption.SignerCount} {SignatureDiscovery.SignerWord(SelectedCoSignOption.SignerCount)})";
             if (others.Count > 0)
                 sentence += "; также объединятся: " + string.Join(", ", others.Select(match => "«" + Path.GetFileName(match.Path) + "»"));
+            if (_mentionBackup)
+                sentence += " (сохранится резервная копия)";
             return sentence + extras;
         }
 
@@ -348,6 +419,7 @@ public partial class SignFileItem : ObservableObject
         if (File.Exists(canonical))
             return "будет создан новый файл подписи — существующий «" + Path.GetFileName(canonical)
                 + "» будет заменён (сохранится резервная копия)" + extras;
+
         return "будет создан новый файл подписи" + extras;
     }
 
@@ -358,13 +430,26 @@ public partial class SignFileItem : ObservableObject
 
     private string? DiscoveryWarning()
     {
-        if (Status != SignStatus.Pending || IsDiscovering || SignsStampedCopy)
+        if (Status != SignStatus.Pending || IsDiscovering)
             return null;
+        string? fallback = null;
+        if (SharedAddUnavailable)
+            fallback = SignsStampedCopy
+                ? "Для копии со штампом режим «Добавить к существующей» недоступен — будет создан новый файл подписи."
+                : "Нет подходящей подписи — будет создан новый файл. Режим «Добавить к существующей», как у первого файла, здесь недоступен.";
+        if (SignsStampedCopy)
+            return fallback;
+        if (fallback is null && _followingShared && !_sharedWantsAdd && _discovered.Count > 0)
+            fallback = "Режим «Создать новую», как у первого файла. Найденные подписи не будут объединены: "
+                + string.Join(", ", _discovered.Select(match => "«" + Path.GetFileName(match.Path) + "»")) + ".";
         var names = PlannedDiscovered().SelectMany(match => match.MismatchedSignerNames).Distinct().ToList();
-        if (names.Count == 0)
-            return null;
-        return "Внимание: при объединении будут исключены подписанты, чья подпись не соответствует документу: "
-            + string.Join("; ", names) + ". Перед исключением программа запросит подтверждение.";
+        var discovery = names.Count == 0
+            ? null
+            : "Внимание: при объединении будут исключены подписанты, чья подпись не соответствует документу: "
+                + string.Join("; ", names) + ". Перед исключением программа запросит подтверждение.";
+        if (fallback is null)
+            return discovery;
+        return discovery is null ? fallback : fallback + " " + discovery;
     }
 
     private string SignedNote => string.IsNullOrEmpty(Message) ? string.Empty : $" ⚠ {Message}";

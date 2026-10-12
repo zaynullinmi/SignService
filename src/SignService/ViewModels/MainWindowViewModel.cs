@@ -38,6 +38,8 @@ public partial class MainWindowViewModel : ObservableObject
         _initializing = true;
         IsDetached = _settings.DetachedSignature;
         MergeWithExisting = _settings.MergeWithExisting;
+        CreateSignatureBackup = _settings.CreateSignatureBackup;
+        ApplyCoSignToAll = _settings.ApplyCoSignToAll;
         UseTimestamp = _settings.UseTimestamp;
         TsaUrl = _settings.TsaUrl;
         UseStamp = _settings.UseStamp;
@@ -58,6 +60,9 @@ public partial class MainWindowViewModel : ObservableObject
 
     /// <summary>Настройки приложения — для окна «О программе».</summary>
     public AppSettings Settings => _settings;
+
+    /// <summary>Версия программы для нижней строки главного окна.</summary>
+    public string VersionDisplay => "Версия " + UpdateService.CurrentVersion;
 
     // Тихая проверка обновлений при запуске: при наличии новой версии — строка
     // в статусе/логе, никаких всплывающих окон.
@@ -101,6 +106,16 @@ public partial class MainWindowViewModel : ObservableObject
     /// </summary>
     [ObservableProperty]
     private bool _mergeWithExisting = true;
+
+    /// <summary>Сохранять .bak перед любой перезаписью существующего .sig.</summary>
+    [ObservableProperty]
+    private bool _createSignatureBackup;
+
+    /// <summary>Режим первого файла в очереди применяется ко всем остальным.</summary>
+    [ObservableProperty]
+    private bool _applyCoSignToAll;
+
+    private bool _syncingCoSign;
 
     [ObservableProperty]
     private bool _includeExpiredCertificates;
@@ -163,7 +178,6 @@ public partial class MainWindowViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(RemoveFromStoreCommand))]
     [NotifyCanExecuteChangedFor(nameof(StampOnlyCommand))]
     [NotifyCanExecuteChangedFor(nameof(ExtractCommand))]
-    [NotifyCanExecuteChangedFor(nameof(MergeFilesCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildContainerCommand))]
     [NotifyCanExecuteChangedFor(nameof(VerifySignatureCommand))]
     [NotifyCanExecuteChangedFor(nameof(SplitSignaturesCommand))]
@@ -213,9 +227,6 @@ public partial class MainWindowViewModel : ObservableObject
 
     /// <summary>Запрос диалога выбора контейнеров для извлечения.</summary>
     public event EventHandler? ExtractRequested;
-
-    /// <summary>Запрос диалога выбора подписей для объединения без подписания.</summary>
-    public event EventHandler? MergeFilesRequested;
 
     /// <summary>Запрос диалога выбора PDF для штампа без подписания.</summary>
     public event EventHandler? StampOnlyRequested;
@@ -300,6 +311,63 @@ public partial class MainWindowViewModel : ObservableObject
 
         foreach (var file in Files)
             file.ApplyPreferredMode(value, resetPin: !_initializing);
+        if (ApplyCoSignToAll)
+            SyncSharedCoSignMode();
+    }
+
+    partial void OnCreateSignatureBackupChanged(bool value)
+    {
+        if (!_initializing)
+        {
+            _settings.CreateSignatureBackup = value;
+            _settings.Save();
+        }
+
+        foreach (var file in Files)
+            file.SetBackupMention(value);
+    }
+
+    partial void OnApplyCoSignToAllChanged(bool value)
+    {
+        if (!_initializing)
+        {
+            _settings.ApplyCoSignToAll = value;
+            _settings.Save();
+        }
+
+        SyncSharedCoSignMode();
+    }
+
+    /// <summary>Смена режима в строке: при «Применить ко всем» источник — первый файл.</summary>
+    internal void NotifyCoSignSelectionChanged(SignFileItem item)
+    {
+        if (_syncingCoSign || !ApplyCoSignToAll || Files.Count == 0 || !ReferenceEquals(Files[0], item))
+            return;
+        SyncSharedCoSignMode();
+    }
+
+    private void SyncSharedCoSignMode()
+    {
+        if (_syncingCoSign)
+            return;
+        _syncingCoSign = true;
+        try
+        {
+            var add = Files.Count > 0 && Files[0].SelectedCoSignOption is { CreateNew: false };
+            for (var i = 0; i < Files.Count; i++)
+            {
+                var file = Files[i];
+                file.CoSignLocked = ApplyCoSignToAll && i > 0;
+                if (!ApplyCoSignToAll || i == 0)
+                    file.StopFollowingSharedMode();
+                else
+                    file.FollowSharedMode(add);
+            }
+        }
+        finally
+        {
+            _syncingCoSign = false;
+        }
     }
 
     partial void OnUseTimestampChanged(bool value)
@@ -739,6 +807,7 @@ public partial class MainWindowViewModel : ObservableObject
                 continue;
 
             var item = new SignFileItem(path) { Owner = this };
+            item.SetBackupMention(CreateSignatureBackup);
             item.SignsStampedCopy = SignsStampedCopy(item);
             Files.Add(item);
             added.Add(item);
@@ -845,6 +914,8 @@ public partial class MainWindowViewModel : ObservableObject
                     matched.Add(System.IO.Path.GetFullPath(path));
             }
 
+            if (ApplyCoSignToAll)
+                SyncSharedCoSignMode();
             return new DiscoveryOutcome(withMatches, attached, matched);
         }
         finally
@@ -872,9 +943,6 @@ public partial class MainWindowViewModel : ObservableObject
 
     [RelayCommand(CanExecute = nameof(CanBrowse))]
     private void Extract() => ExtractRequested?.Invoke(this, EventArgs.Empty);
-
-    [RelayCommand(CanExecute = nameof(CanBrowse))]
-    private void MergeFiles() => MergeFilesRequested?.Invoke(this, EventArgs.Empty);
 
     [RelayCommand(CanExecute = nameof(CanBrowse))]
     private void BuildContainer() => BuildContainerRequested?.Invoke(this, EventArgs.Empty);
@@ -1191,39 +1259,6 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    /// <summary>Объединяет выбранные файлы подписей в один — без создания своей подписи.</summary>
-    public async Task MergeSignatureFilesAsync(IReadOnlyList<string> paths)
-    {
-        if (paths.Count == 0)
-            return;
-
-        IsBusy = true;
-        try
-        {
-            var r = await Task.Run(() => CmsExtractor.MergeSignatureFiles(paths));
-            var parts = new List<string>
-            {
-                $"подписантов: {r.SignerCount}",
-                r.AttachedOutput ? "прикреплённая (документ внутри)" : "откреплённая",
-                r.DocumentNote,
-            };
-            if (r.ExcludedSigners.Count > 0)
-                parts.Add("исключены не соответствующие документу: " + string.Join("; ", r.ExcludedSigners));
-            if (r.UnverifiedSigners.Count > 0)
-                parts.Add("не удалось проверить: " + string.Join("; ", r.UnverifiedSigners));
-
-            StatusText = $"Объединено → «{System.IO.Path.GetFileName(r.OutputPath)}»: {string.Join(", ", parts)}";
-        }
-        catch (Exception ex)
-        {
-            StatusText = "Объединение не выполнено: " + ex.Message;
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
     /// <summary>Извлекает содержимое выбранных контейнеров в файлы рядом с ними.</summary>
     public async Task ExtractContainersAsync(IReadOnlyList<string> containerPaths)
     {
@@ -1265,7 +1300,12 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void RemoveFile(SignFileItem item) => Files.Remove(item);
+    private void RemoveFile(SignFileItem item)
+    {
+        Files.Remove(item);
+        if (ApplyCoSignToAll)
+            SyncSharedCoSignMode();
+    }
 
     [RelayCommand(CanExecute = nameof(CanClear))]
     private void Clear()
@@ -1316,6 +1356,8 @@ public partial class MainWindowViewModel : ObservableObject
                 }
             }
 
+            WarnIfEmbeddedDocumentDropped(file, blocks);
+
             var inputs = file.PlannedMergeInputs();
             if (inputs.Count == 0)
                 continue;
@@ -1340,6 +1382,38 @@ public partial class MainWindowViewModel : ObservableObject
         if (blocks.Count == 0)
             return null;
         return string.Join("\n\n", blocks) + "\n\nПродолжить?";
+    }
+
+    // Прикреплённая подпись хранит копию документа внутри. Откреплённый режим
+    // или другая копия документа эту копию затирают — предупреждаем до записи.
+    private void WarnIfEmbeddedDocumentDropped(SignFileItem file, List<string> blocks)
+    {
+        if (file.SignsStampedCopy || file.SelectedCoSignOption is not { CreateNew: false, SignaturePath: { } path })
+            return;
+        if (!System.IO.File.Exists(path))
+            return;
+        try
+        {
+            var embedded = CmsMerger.ExtractContent(System.IO.File.ReadAllBytes(path));
+            if (embedded is null)
+                return;
+            var name = System.IO.Path.GetFileName(path);
+            if (IsDetached)
+            {
+                blocks.Add($"«{file.FileName}»: «{name}» — прикреплённая подпись, внутри лежит копия документа. "
+                    + "Откреплённый режим уберёт её из файла (подписанты сохранятся, перед заменой создаётся резервная копия).");
+                return;
+            }
+
+            var document = System.IO.File.ReadAllBytes(file.FilePath);
+            if (!embedded.AsSpan().SequenceEqual(document))
+                blocks.Add($"«{file.FileName}»: в «{name}» вложен другой документ. Он будет заменён текущим файлом "
+                    + "(перед заменой создаётся резервная копия).");
+        }
+        catch (Exception e)
+        {
+            blocks.Add($"«{file.FileName}»: не удалось проверить, есть ли внутри подписи копия документа ({e.Message}).");
+        }
     }
 
     [RelayCommand(CanExecute = nameof(CanSignAll))]
@@ -1459,6 +1533,7 @@ public partial class MainWindowViewModel : ObservableObject
                         StampWithDate = StampWithDate,
                         StampLogoPath = StampLogoPath,
                         StampParameters = stampParameters,
+                        CreateBackup = CreateSignatureBackup,
                         PowerOfAttorney = poaPackage?.Info,
                         PreparedPowerOfAttorney = poaPackage,
                     };

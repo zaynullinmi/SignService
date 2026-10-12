@@ -38,6 +38,20 @@ public class AppSettings
     /// <summary>Объединять свою подпись с существующим .sig (соподписание).</summary>
     public bool MergeWithExisting { get; set; } = true;
 
+    /// <summary>
+    /// Сохранять .bak перед любой перезаписью существующего .sig.
+    /// По умолчанию выключено: копия всё равно создаётся, если файл заменяется
+    /// без объединения, из него исключаются подписанты или пропадает документ,
+    /// вложенный в прикреплённую подпись.
+    /// </summary>
+    public bool CreateSignatureBackup { get; set; }
+
+    /// <summary>
+    /// Все файлы очереди используют режим первого файла
+    /// («Создать новую» или «Добавить к существующей»).
+    /// </summary>
+    public bool ApplyCoSignToAll { get; set; }
+
     /// <summary>Добавлять штамп времени TSA (CAdES-T) в подпись.</summary>
     public bool UseTimestamp { get; set; }
 

@@ -49,6 +49,28 @@ internal static class UiSmokeTests
         window.Show();
         Dispatcher.UIThread.RunJobs();
         Assert(window.CaptureRenderedFrame() is not null, "main window must render");
+        var browse = window.GetVisualDescendants().OfType<Button>().First(b => b.Content?.ToString() == "Обзор…");
+        var toolsButton = window.GetVisualDescendants().OfType<Button>().First(b => b.Content?.ToString()?.StartsWith("Инструменты", StringComparison.Ordinal) == true);
+        var clear = window.GetVisualDescendants().OfType<Button>().First(b => b.Content?.ToString() == "Очистить список");
+        var drop = window.GetVisualDescendants().OfType<Border>().First(b => b.Name == "DropZone");
+        var browseAt = browse.TranslatePoint(new Point(0, 0), window)!.Value;
+        var toolsAt = toolsButton.TranslatePoint(new Point(0, 0), window)!.Value;
+        var clearAt = clear.TranslatePoint(new Point(0, 0), window)!.Value;
+        var dropAt = drop.TranslatePoint(new Point(0, 0), window)!.Value;
+        Assert(browseAt.Y < dropAt.Y && toolsAt.Y < dropAt.Y && clearAt.Y < dropAt.Y,
+            $"browse, tools and clear must sit above the file list (browse {browseAt.Y}, drop {dropAt.Y})");
+        Assert(Math.Abs(browseAt.Y - toolsAt.Y) < 4 && Math.Abs(browseAt.Y - clearAt.Y) < 4,
+            "browse, tools and clear must share one row");
+        Assert(toolsAt.X > browseAt.X && clearAt.X > toolsAt.X, "clear must stay on the right of tools");
+        AssertSignButtonOnTheRight(window, dropAt.Y, clear);
+        AssertClearLogOnTheSettingsRow(window);
+        var labels = window.GetVisualDescendants().OfType<TextBlock>().Select(block => block.Text).ToList();
+        Assert(labels.Any(text => text != null && text.StartsWith("Версия ", StringComparison.Ordinal)),
+            "main window must show the version");
+        Assert(labels.All(text => text == null || !text.Contains("Зайнуллин", StringComparison.Ordinal)),
+            "author credit must not stay on the main window");
+        Assert(window.GetVisualDescendants().OfType<CheckBox>().Any(box => box.Content?.ToString() == "Применить ко всем"),
+            "apply-to-all checkbox must sit on the main window");
 
         // Контекстное меню — отдельное всплывающее окно вне дерева элементов списка.
         var row = window.GetVisualDescendants().OfType<Border>().First(b => b.ContextMenu is not null);
@@ -72,7 +94,9 @@ internal static class UiSmokeTests
         flyout.ShowAt(tools);
         Dispatcher.UIThread.RunJobs();
         var toolItems = flyout.Items.OfType<MenuItem>().ToList();
-        Assert(toolItems.Count >= 7 && toolItems.All(i => i.Command is not null), "tools menu commands must be bound");
+        Assert(toolItems.Count == 6 && toolItems.All(i => i.Command is not null)
+            && toolItems.All(i => i.Header?.ToString()?.StartsWith("Объединить", StringComparison.Ordinal) != true),
+            "tools menu must stay bound and no longer offer merge: " + string.Join("; ", toolItems.Select(i => i.Header)));
         flyout.Hide();
 
         var signers = new[]
@@ -95,6 +119,12 @@ internal static class UiSmokeTests
             dialog.Show();
             Dispatcher.UIThread.RunJobs();
             Assert(dialog.CaptureRenderedFrame() is not null, dialog.GetType().Name + " must render");
+            if (dialog is SettingsDialog)
+            {
+                var backup = dialog.GetVisualDescendants().OfType<CheckBox>()
+                    .Any(box => box.Content?.ToString()?.Contains("резервную копию", StringComparison.Ordinal) == true);
+                Assert(backup, "settings must offer the .bak checkbox");
+            }
             dialog.Close();
         }
 
@@ -135,12 +165,48 @@ internal static class UiSmokeTests
             "co-sign choice must list the found signature and «create new»");
         var texts = window.GetVisualDescendants().OfType<TextBlock>().Select(text => text.Text ?? "").ToList();
         Assert(texts.Any(text => text.Contains("будет добавлена подпись №2")), "plan line must be shown");
+        var drop = window.GetVisualDescendants().OfType<Border>().First(b => b.Name == "DropZone");
+        var clear = window.GetVisualDescendants().OfType<Button>().First(b => b.Content?.ToString() == "Очистить список");
+        AssertSignButtonOnTheRight(window, drop.TranslatePoint(new Point(0, 0), window)!.Value.Y, clear);
+        AssertClearLogOnTheSettingsRow(window);
         vm.IsBusy = true;
         Dispatcher.UIThread.RunJobs();
         Assert(!combo.IsEnabled, "co-sign choice must be locked while signing");
         vm.IsBusy = false;
-        Assert(window.CaptureRenderedFrame() is not null, "co-sign row must render");
+        var frame = window.CaptureRenderedFrame() ?? throw new Exception("co-sign row must render");
+        var shot = Path.Combine("/opt/cursor/artifacts", "main-window.png");
+        Directory.CreateDirectory(Path.GetDirectoryName(shot)!);
+        frame.Save(shot);
+        frame.Dispose();
         window.Close();
+    }
+
+    private static void AssertSignButtonOnTheRight(MainWindow window, double dropY, Button clear)
+    {
+        var sign = window.GetVisualDescendants().OfType<Button>().First(b => b.Content?.ToString() == "Подписать");
+        var signAt = sign.TranslatePoint(new Point(0, 0), window)!.Value;
+        var signRight = sign.TranslatePoint(new Point(sign.Bounds.Width, 0), window)!.Value.X;
+        var clearAt = clear.TranslatePoint(new Point(0, 0), window)!.Value;
+        var clearRight = clear.TranslatePoint(new Point(clear.Bounds.Width, 0), window)!.Value.X;
+        Assert(signAt.Y > dropY, $"sign button must stay below the file list (sign {signAt.Y}, list {dropY})");
+        Assert(Math.Abs(signRight - clearRight) < 2, $"sign button must share the right edge with clear ({signRight} vs {clearRight})");
+        Assert(signAt.X > clearAt.X, "sign button must sit on the right side");
+    }
+
+    private static void AssertClearLogOnTheSettingsRow(MainWindow window)
+    {
+        var clearLog = window.GetVisualDescendants().OfType<Button>().First(b => b.Content?.ToString() == "Очистить лог");
+        var settings = window.GetVisualDescendants().OfType<Button>().First(b => b.Content?.ToString() == "Настройки…");
+        var listClear = window.GetVisualDescendants().OfType<Button>().First(b => b.Content?.ToString() == "Очистить список");
+        Assert(clearLog.Command is not null && clearLog.Command.CanExecute(null), "clear-log command must stay bound");
+        Assert(window.GetVisualDescendants().OfType<Button>().All(b => b.Content?.ToString() != "Очистить"),
+            "the log button must be renamed, not left as «Очистить»");
+        var logAt = clearLog.TranslatePoint(new Point(0, 0), window)!.Value;
+        var settingsAt = settings.TranslatePoint(new Point(0, 0), window)!.Value;
+        var listAt = listClear.TranslatePoint(new Point(0, 0), window)!.Value;
+        Assert(Math.Abs(logAt.Y - settingsAt.Y) < 4, $"clear log must share the settings row ({logAt.Y} vs {settingsAt.Y})");
+        Assert(logAt.X < settingsAt.X, "clear log must sit on the left of settings");
+        Assert(listAt.Y < logAt.Y, "clear list must stay above the log button");
     }
 
     private static void Assert(bool value, string message)

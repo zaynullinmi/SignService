@@ -9,7 +9,7 @@
         WindowStartupLocation="CenterScreen"
         DragDrop.AllowDrop="True">
 
-    <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto">
+    <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto">
 
         <!-- Выбор сертификата -->
         <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto" Margin="0,0,0,8">
@@ -104,8 +104,39 @@
             </Button>
         </WrapPanel>
 
+        <!-- Команды списка: над зоной перетаскивания -->
+        <Grid Grid.Row="3" ColumnDefinitions="Auto,Auto,Auto,*,Auto" Margin="0,0,0,8">
+            <Button Grid.Column="0" Content="Обзор…" Command="{Binding BrowseCommand}"/>
+            <Button Grid.Column="1" Margin="8,0,0,0" Content="Инструменты ▾"
+                    ToolTip.Tip="Операции с подписями без подписания: проверка, извлечение, разделение, сборка контейнера, штамп">
+                <Button.Flyout>
+                    <MenuFlyout>
+                        <MenuItem Header="Проверить ЭЦП… (подписанты, ГОСТ без КриптоПро)"
+                                  Command="{Binding VerifySignatureCommand}"/>
+                        <Separator/>
+                        <MenuItem Header="Извлечь из .sig… (документ и подписи из контейнера)"
+                                  Command="{Binding ExtractCommand}"/>
+                        <MenuItem Header="Разделить групповую подпись… (отдельная .sig для каждого)"
+                                  Command="{Binding SplitSignaturesCommand}"/>
+                        <MenuItem Header="Исключить подписанта из .sig…"
+                                  Command="{Binding RemoveSignerCommand}"/>
+                        <MenuItem Header="Собрать контейнер… (документ + подписи в один .sig)"
+                                  Command="{Binding BuildContainerCommand}"/>
+                        <MenuItem Header="Штамп на PDF… (копия со штампом без подписания)"
+                                  Command="{Binding StampOnlyCommand}"/>
+                    </MenuFlyout>
+                </Button.Flyout>
+            </Button>
+            <CheckBox Grid.Column="2" Margin="12,0,0,0" VerticalAlignment="Center"
+                      IsChecked="{Binding ApplyCoSignToAll}"
+                      Content="Применить ко всем"
+                      ToolTip.Tip="Все файлы берут режим первого в списке: «Создать новую» или «Добавить к существующей». Если подходящей подписи нет, строка остаётся на «Создать новую» и пишет об этом. Галочка запоминается."/>
+            <Button Grid.Column="4" Content="Очистить список" Command="{Binding ClearCommand}"
+                    HorizontalAlignment="Right"/>
+        </Grid>
+
         <!-- Зона перетаскивания / список файлов -->
-        <Border Grid.Row="3"
+        <Border Grid.Row="4"
                 Name="DropZone"
                 BorderThickness="2"
                 BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
@@ -234,50 +265,22 @@
             </Panel>
         </Border>
 
-        <!-- Кнопки -->
-        <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
-            <Button Content="Обзор…" Command="{Binding BrowseCommand}"/>
-            <Button Content="Инструменты ▾"
-                    ToolTip.Tip="Операции с подписями без подписания: извлечение, объединение, сборка контейнера, штамп">
-                <Button.Flyout>
-                    <MenuFlyout>
-                        <MenuItem Header="Проверить ЭЦП… (подписанты, ГОСТ без КриптоПро)"
-                                  Command="{Binding VerifySignatureCommand}"/>
-                        <Separator/>
-                        <MenuItem Header="Извлечь из .sig… (документ и подписи из контейнера)"
-                                  Command="{Binding ExtractCommand}"/>
-                        <MenuItem Header="Объединить .sig… (несколько подписей в одну)"
-                                  Command="{Binding MergeFilesCommand}"/>
-                        <MenuItem Header="Разделить групповую подпись… (отдельная .sig для каждого)"
-                                  Command="{Binding SplitSignaturesCommand}"/>
-                        <MenuItem Header="Исключить подписанта из .sig…"
-                                  Command="{Binding RemoveSignerCommand}"/>
-                        <MenuItem Header="Собрать контейнер… (документ + подписи в один .sig)"
-                                  Command="{Binding BuildContainerCommand}"/>
-                        <MenuItem Header="Штамп на PDF… (копия со штампом без подписания)"
-                                  Command="{Binding StampOnlyCommand}"/>
-                    </MenuFlyout>
-                </Button.Flyout>
-            </Button>
-            <Button Content="Очистить список" Command="{Binding ClearCommand}"/>
-            <Button Content="Подписать"
+        <!-- Подписание: та же вертикаль, кнопка у правого края, как «Очистить список» -->
+        <Grid Grid.Row="5" ColumnDefinitions="*,Auto,Auto" Margin="0,12,0,0">
+            <ProgressBar Grid.Column="1" IsIndeterminate="True" Width="120"
+                         Margin="0,0,8,0" IsVisible="{Binding IsBusy}" VerticalAlignment="Center"/>
+            <Button Grid.Column="2" Content="Подписать"
                     Command="{Binding SignAllCommand}"
                     Classes="accent"
-                    HorizontalAlignment="Right"
                     FontWeight="SemiBold"
-                    Padding="24,6"/>
-            <ProgressBar IsIndeterminate="True" Width="120"
-                         IsVisible="{Binding IsBusy}" VerticalAlignment="Center"/>
-        </StackPanel>
+                    Padding="24,6"
+                    HorizontalAlignment="Right"/>
+        </Grid>
 
         <!-- Лог операций (всегда виден) -->
-        <Grid Grid.Row="5" RowDefinitions="Auto,Auto" Margin="0,8,0,0">
-            <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
-                <TextBlock Grid.Column="0" Text="Лог операций" FontWeight="SemiBold"
-                           VerticalAlignment="Center"/>
-                <Button Grid.Column="1" Content="Очистить" Padding="8,2"
-                        Command="{Binding ClearLogCommand}"/>
-            </Grid>
+        <Grid Grid.Row="6" RowDefinitions="Auto,Auto" Margin="0,8,0,0">
+            <TextBlock Grid.Row="0" Text="Лог операций" FontWeight="SemiBold"
+                       VerticalAlignment="Center"/>
             <TextBox Grid.Row="1" Name="LogBox" Margin="0,4,0,0"
                      Text="{Binding LogText, Mode=OneWay}"
                      IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
@@ -285,17 +288,19 @@
                      Height="120"/>
         </Grid>
 
-        <!-- Нижняя строка: автор и служебные окна -->
-        <Grid Grid.Row="6" ColumnDefinitions="*,Auto,Auto" Margin="0,10,0,0">
-            <TextBlock Grid.Column="0" Margin="0,0,8,0" VerticalAlignment="Center"
-                       Text="Автор: Зайнуллин Марат Илгамович — +7-963-694-2461, zaynullinmi@gmail.com"
-                       ToolTip.Tip="https://github.com/zaynullinmi"
+        <!-- Нижняя строка: очистка лога слева, версия, настройки -->
+        <Grid Grid.Row="7" ColumnDefinitions="Auto,*,Auto,Auto" Margin="0,10,0,0">
+            <Button Grid.Column="0" Content="Очистить лог" Padding="8,2" Margin="0,0,12,0"
+                    Command="{Binding ClearLogCommand}"
+                    ToolTip.Tip="Стирает только текст лога операций. Список файлов не очищается."/>
+            <TextBlock Grid.Column="1" Margin="0,0,8,0" VerticalAlignment="Center"
+                       Text="{Binding VersionDisplay}"
                        TextTrimming="CharacterEllipsis"
                        Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
-            <Button Grid.Column="1" Name="SettingsButton" Padding="8,2" Margin="0,0,8,0"
+            <Button Grid.Column="2" Name="SettingsButton" Padding="8,2" Margin="0,0,8,0"
                     Content="Настройки…"
-                    ToolTip.Tip="Штамп времени (CAdES-T) и адрес службы TSA"/>
-            <Button Grid.Column="2" Name="AboutButton" Padding="8,2" Content="О программе"
+                    ToolTip.Tip="Резервная копия .sig, штамп времени (CAdES-T) и адрес службы TSA"/>
+            <Button Grid.Column="3" Name="AboutButton" Padding="8,2" Content="О программе"
                     ToolTip.Tip="Версия, автор, история версий и обновления"/>
         </Grid>
     </Grid>

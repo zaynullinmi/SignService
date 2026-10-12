@@ -1,0 +1,75 @@
+# Постоянная тестовая сборка форка: тег test-latest всегда указывает
+# на последний коммит, а SignService.exe по одной и той же ссылке
+# заменяется. На zaynullinmi/SignService задание не выполняется.
+name: Test build
+
+on:
+  push:
+    branches:
+      - cursor/v1.3.1-ui-tweaks-cb6f
+      - cursor/cosign-discovery-gost-cb6f
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: test-latest
+  cancel-in-progress: false
+
+jobs:
+  publish-test-latest:
+    name: Тестовая сборка test-latest
+    if: github.repository == 'sozertsatel/SignService'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      # Те же флаги, что у задания «Publish self-contained single-file exe»
+      # в .github/workflows/build.yml.
+      - name: Publish self-contained single-file exe
+        run: >
+          dotnet publish src/SignService -c Release -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          -o publish
+
+      - name: SHA-256
+        working-directory: publish
+        run: sha256sum SignService.exe | tee SignService.exe.sha256
+
+      - name: Обновить pre-release test-latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/.*<Version>\([^<]*\)<\/Version>.*/\1/p' src/SignService/SignService.csproj | head -1)"
+          sha="$(git rev-parse HEAD)"
+          notes="$(printf '%s\n' \
+            "Тестовая сборка форка, не выпуск для пользователей. Автообновление SignService запрашивает только релизы https://github.com/zaynullinmi/SignService/releases/latest и этот pre-release не видит." \
+            "" \
+            "- Версия: ${version}" \
+            "- Коммит: ${sha}" \
+            "- Ветка: ${GITHUB_REF_NAME}" \
+            "" \
+            "https://github.com/sozertsatel/SignService/releases/download/test-latest/SignService.exe")"
+          if gh release view test-latest >/dev/null 2>&1; then
+            gh release delete test-latest --yes --cleanup-tag
+          fi
+          # Тег без релиза тоже сдвигаем, иначе create останется на старом коммите.
+          git push origin ":refs/tags/test-latest" || true
+          gh release create test-latest \
+            publish/SignService.exe \
+            publish/SignService.exe.sha256 \
+            --target "$sha" \
+            --title "Тестовая сборка (последняя)" \
+            --prerelease \
+            --latest=false \
+            --notes "$notes"

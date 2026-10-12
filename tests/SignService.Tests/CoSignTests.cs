@@ -36,6 +36,8 @@ internal static class CoSignTests
         var other = System.Text.Encoding.UTF8.GetBytes("другая версия документа");
 
         await CheckDiscoveryAndAppend(root, signer, certA, certB, data);
+        await CheckBackupOffByDefault(root, signer, certA, certB, data);
+        await CheckApplyModeToAll(root, signer, certA, data);
         await CheckCreateNewConfirmation(root, signer, certA, certB, data);
         await CheckExclusionConfirmation(root, signer, certA, certB, certC, data, other);
         await CheckUnmatchedSignatureListed(root, signer, certA, data, other);
@@ -43,6 +45,7 @@ internal static class CoSignTests
         await CheckDiscoveryInBackground(root, signer, certA, data);
         await CheckCanonicalWithoutSignedAttributes(root, signer, certA, certB, data);
         await CheckStampedCopyLeavesOriginalSignatures(root, signer, certA, certB, certC);
+        await CheckSignatureLossGuards(root, signer, certA, certB, certC, data);
         CheckMergeNamesOutput(root, signer, certA, certB, data);
         CheckGostParameters();
         await CheckSamplesIfPresent(root);
@@ -93,6 +96,101 @@ internal static class CoSignTests
         Console.WriteLine("cosign: odd name discovered by content, append shows «2 (1 + ваша)», no backup clutter: OK");
     }
 
+    private static async Task CheckBackupOffByDefault(string root, DocumentSigner signer,
+        X509Certificate2 certA, X509Certificate2 certB, byte[] data)
+    {
+        Assert(!new AppSettings().CreateSignatureBackup, "always-backup setting must default to off");
+        var dir = Path.Combine(root, "always_backup");
+        Directory.CreateDirectory(dir);
+        var document = Path.Combine(dir, "акт.pdf");
+        var odd = Path.Combine(dir, "акт-.pdf .sig");
+        await File.WriteAllBytesAsync(document, data);
+        var original = signer.Sign(data, certA);
+        await File.WriteAllBytesAsync(odd, original);
+
+        var vm = ViewModel(dir);
+        await vm.AddFilesAsync(document);
+        var item = vm.Files.Single();
+        Assert(!item.StatusDisplay.Contains("резервн"),
+            "a plain append must not promise a backup while the setting is off: " + item.StatusDisplay);
+        vm.CreateSignatureBackup = true;
+        Assert(item.StatusDisplay.Contains("резервная копия"),
+            "always-backup must be mentioned when appending: " + item.StatusDisplay);
+        vm.SelectedCertificate = new CertificateItem(certB);
+        await vm.SignAllCommand.ExecuteAsync(null);
+        Assert(item.Status == SignStatus.Signed, "append with always-backup failed: " + item.Message);
+        var backup = Directory.GetFiles(dir, "*.bak").Single();
+        Assert((await File.ReadAllBytesAsync(backup)).SequenceEqual(original),
+            "always-backup must keep the signature from before a plain append");
+        Console.WriteLine("cosign: always-backup copies .sig even when signers are kept: OK");
+    }
+
+    private static async Task CheckApplyModeToAll(string root, DocumentSigner signer, X509Certificate2 certA, byte[] data)
+    {
+        Assert(!new AppSettings().ApplyCoSignToAll, "apply-to-all must default to off");
+        var dir = Path.Combine(root, "apply_all");
+        Directory.CreateDirectory(dir);
+        var first = Path.Combine(dir, "первый.pdf");
+        var second = Path.Combine(dir, "второй.pdf");
+        var third = Path.Combine(dir, "третий.pdf");
+        var thirdBytes = System.Text.Encoding.UTF8.GetBytes("другой документ для третьего файла");
+        await File.WriteAllBytesAsync(first, data);
+        await File.WriteAllBytesAsync(second, System.Text.Encoding.UTF8.GetBytes("документ без своей подписи"));
+        await File.WriteAllBytesAsync(third, thirdBytes);
+        await File.WriteAllBytesAsync(Path.Combine(dir, "первый-.pdf .sig"), signer.Sign(data, certA));
+        await File.WriteAllBytesAsync(Path.Combine(dir, "третий-.pdf .sig"), signer.Sign(thirdBytes, certA));
+
+        var vm = ViewModel(dir);
+        await vm.AddFilesAsync(first, second);
+        var lead = vm.Files[0];
+        var other = vm.Files[1];
+        Assert(lead.SelectedCoSignOption is { CreateNew: false }, "first file has a signature to append to");
+        Assert(other.SelectedCoSignOption is { CreateNew: true } && !other.SharedAddUnavailable,
+            "without the checkbox a file with no signature just offers a new file");
+
+        vm.ApplyCoSignToAll = true;
+        Assert(!other.CanChooseCoSign && other.SharedAddUnavailable
+            && other.SelectedCoSignOption is { CreateNew: true }
+            && other.WarningDisplay!.Contains("недоступен"),
+            "apply-to-all must say when add mode is impossible: " + other.WarningDisplay);
+        Assert(lead.CanChooseCoSign, "the first file stays editable");
+
+        lead.SelectedCoSignOption = lead.CoSignOptions.Single(option => option.CreateNew);
+        Assert(other.SelectedCoSignOption is { CreateNew: true } && !other.SharedAddUnavailable,
+            "switching the first file to create-new clears the fallback note");
+
+        lead.SelectedCoSignOption = lead.CoSignOptions.First(option => !option.CreateNew);
+        Assert(other.SharedAddUnavailable, "switching the first file back to add restores the note");
+
+        await vm.AddFilesAsync(third);
+        var added = vm.Files[2];
+        Assert(!added.CanChooseCoSign && added.SelectedCoSignOption is { CreateNew: false },
+            "a newly added file with its own signature follows the first file's add mode");
+
+        lead.SelectedCoSignOption = lead.CoSignOptions.Single(option => option.CreateNew);
+        Assert(added.SelectedCoSignOption is { CreateNew: true }
+            && added.WarningDisplay!.Contains("не будут объединены")
+            && added.WarningDisplay.Contains("третий-.pdf .sig"),
+            "apply-to-all must say which existing signatures will be left out: " + added.WarningDisplay);
+        lead.SelectedCoSignOption = lead.CoSignOptions.First(option => !option.CreateNew);
+
+        vm.ApplyCoSignToAll = false;
+        Assert(added.CanChooseCoSign && lead.SelectedCoSignOption is { CreateNew: false },
+            "turning the checkbox off unlocks rows and keeps the current mode");
+        added.SelectedCoSignOption = added.CoSignOptions.Single(option => option.CreateNew);
+        Assert(lead.SelectedCoSignOption is { CreateNew: false } && added.SelectedCoSignOption is { CreateNew: true },
+            "without the checkbox files choose independently");
+
+        var saved = System.Text.Json.JsonSerializer.Deserialize<AppSettings>(
+            await File.ReadAllTextAsync(Path.Combine(dir, "settings", "settings.json")));
+        Assert(saved is { ApplyCoSignToAll: false }, "checkbox state must be saved");
+        vm.ApplyCoSignToAll = true;
+        saved = System.Text.Json.JsonSerializer.Deserialize<AppSettings>(
+            await File.ReadAllTextAsync(Path.Combine(dir, "settings", "settings.json")));
+        Assert(saved is { ApplyCoSignToAll: true }, "turning the checkbox on must be saved");
+        Console.WriteLine("cosign: apply-to-all follows the first file and names a fallback: OK");
+    }
+
     private static async Task CheckCreateNewConfirmation(string root, DocumentSigner signer,
         X509Certificate2 certA, X509Certificate2 certB, byte[] data)
     {
@@ -112,11 +210,13 @@ internal static class CoSignTests
         vm.MergeWithExisting = false;
         var item = vm.Files.Single();
         Assert(item.StatusDisplay.Contains("будет создан новый файл подписи")
-            && item.StatusDisplay.Contains("будет заменён"),
-            "create-new row must warn that the canonical file will be replaced: " + item.StatusDisplay);
+            && item.StatusDisplay.Contains("будет заменён")
+            && item.StatusDisplay.Contains("резервная копия"),
+            "create-new row must warn that the canonical file will be replaced and backed up: " + item.StatusDisplay);
         var risks = vm.DescribeSignRisks(vm.Files.ToList());
-        Assert(risks is not null && risks.Contains("заявка-.pdf .sig") && risks.Contains("перезаписан без объединения"),
-            "confirmation must mention the matching signature and the overwrite: " + risks);
+        Assert(risks is not null && risks.Contains("заявка-.pdf .sig") && risks.Contains("перезаписан без объединения")
+            && risks.Contains("резервная копия"),
+            "confirmation must mention the matching signature, the overwrite and the backup: " + risks);
 
         vm.SelectedCertificate = new CertificateItem(certB);
         vm.RequestConfirmAsync = (_, _) => Task.FromResult(false);
@@ -434,6 +534,223 @@ internal static class CoSignTests
         }
 
         Console.WriteLine("cosign: GOST 2001/2012 with signatureAlgorithm parameters verify fully; unbound and damaged rejected: OK");
+    }
+
+    private static async Task CheckSignatureLossGuards(string root, DocumentSigner signer,
+        X509Certificate2 certA, X509Certificate2 certB, X509Certificate2 certC, byte[] data)
+    {
+        await CheckOtherSignatureFileUntouched(root, signer, certA, certB, data);
+        await CheckBatchFailureLeavesNeighbours(root, signer, certA, certB, data);
+        await CheckSignatureChangedDuringSign(root, signer, certA, certB, certC, data);
+        await CheckAttachedDocumentIsBackedUp(root, signer, certA, certB, data);
+        CheckExpiredSignerIsKept(signer, certB, data);
+        await CheckOddCyrillicNameRoundtrip(root, signer, certA, certB, data);
+        await CheckLockedSignatureStaysWhole(root, signer, certA, certB, data);
+        Console.WriteLine("cosign: other .sig untouched, batch failure, changed file, attached backup, expired signer, odd name: OK");
+    }
+
+    // В папке два подходящих .sig. Дописываем в один — второй файл байт в байт тот же,
+    // даже если его подписанты вошли в объединение.
+    private static async Task CheckOtherSignatureFileUntouched(string root, DocumentSigner signer,
+        X509Certificate2 certA, X509Certificate2 certB, byte[] data)
+    {
+        var dir = Path.Combine(root, "two_sigs");
+        Directory.CreateDirectory(dir);
+        var document = Path.Combine(dir, "протокол.pdf");
+        var odd = Path.Combine(dir, "протокол-.pdf .sig");
+        var canonical = document + ".sig";
+        await File.WriteAllBytesAsync(document, data);
+        var oddBytes = signer.Sign(data, certA);
+        var canonicalBytes = signer.Sign(data, certB);
+        await File.WriteAllBytesAsync(odd, oddBytes);
+        await File.WriteAllBytesAsync(canonical, canonicalBytes);
+
+        var result = await signer.SignFileAsync(document, certA, new DocumentSigner.SignOptions
+        {
+            Detached = true,
+            MergeWithExisting = true,
+            ExistingSignaturePath = odd,
+            ExtraSignatures = new[] { canonical },
+        });
+        Assert(SignatureDiscovery.SamePath(result.SignaturePath, odd), "append must write into the selected file");
+        Assert((await File.ReadAllBytesAsync(canonical)).SequenceEqual(canonicalBytes),
+            "a second matching .sig must not be overwritten");
+        Assert(CmsMerger.CountSigners(await File.ReadAllBytesAsync(odd)) == 2, "selected file keeps both people");
+        Assert(Directory.GetFiles(dir, "*.bak").Length == 0, "plain append of kept signers does not need a backup");
+    }
+
+    // Ошибка на втором файле не откатывает первый и не трогает уже лежащую подпись второго.
+    private static async Task CheckBatchFailureLeavesNeighbours(string root, DocumentSigner signer,
+        X509Certificate2 certA, X509Certificate2 certB, byte[] data)
+    {
+        var dir = Path.Combine(root, "batch_fail");
+        Directory.CreateDirectory(dir);
+        var first = Path.Combine(dir, "первый.pdf");
+        var second = Path.Combine(dir, "пустой.pdf");
+        var secondSig = second + ".sig";
+        await File.WriteAllBytesAsync(first, data);
+        await File.WriteAllBytesAsync(second, Array.Empty<byte>());
+        // Подпись пустого файла сделана для других байт: к «первому.pdf» она не относится.
+        var kept = signer.Sign(System.Text.Encoding.UTF8.GetBytes("другой документ"), certA);
+        await File.WriteAllBytesAsync(secondSig, kept);
+
+        var vm = ViewModel(dir);
+        vm.RequestConfirmAsync = (_, _) => Task.FromResult(true);
+        vm.SelectedCertificate = new CertificateItem(certB);
+        await vm.AddFilesAsync(first, second);
+        await vm.SignAllCommand.ExecuteAsync(null);
+        Assert(vm.Files[0].Status == SignStatus.Signed, "first file must be signed before the failure: " + vm.Files[0].Message);
+        Assert(vm.Files[1].Status == SignStatus.Failed, "empty file must fail, not be reported as signed");
+        Assert(signer.VerifyDetached(data, await File.ReadAllBytesAsync(first + ".sig")), "first signature must verify");
+        Assert((await File.ReadAllBytesAsync(secondSig)).SequenceEqual(kept),
+            "failure must leave the other file's existing .sig untouched");
+    }
+
+    // Пока готовилась подпись, файл .sig заменили. Запись отменяется, новая версия остаётся.
+    private static async Task CheckSignatureChangedDuringSign(string root, DocumentSigner signer,
+        X509Certificate2 certA, X509Certificate2 certB, X509Certificate2 certC, byte[] data)
+    {
+        var dir = Path.Combine(root, "changed_during_sign");
+        Directory.CreateDirectory(dir);
+        var document = Path.Combine(dir, "журнал.pdf");
+        var sig = Path.Combine(dir, "журнал-.pdf .sig");
+        await File.WriteAllBytesAsync(document, data);
+        await File.WriteAllBytesAsync(sig, signer.Sign(data, certA));
+        var newer = CmsMerger.Merge(new[] { signer.Sign(data, certA), signer.Sign(data, certC) });
+
+        try
+        {
+            await signer.SignFileAsync(document, certB, new DocumentSigner.SignOptions
+            {
+                Detached = true,
+                MergeWithExisting = true,
+                ExistingSignaturePath = sig,
+                BeforePublish = () => File.WriteAllBytes(sig, newer),
+            });
+            throw new Exception("a signature replaced mid-sign must not be overwritten");
+        }
+        catch (IOException ex)
+        {
+            Assert(ex.Message.Contains("изменился"), ex.Message);
+        }
+
+        Assert((await File.ReadAllBytesAsync(sig)).SequenceEqual(newer), "the newer signature must stay on disk");
+        Assert(Directory.GetFiles(dir, "*.bak").Length == 0, "aborted sign must not leave a backup instead of the file");
+        DocumentSigner.ThrowIfSignatureChanged(newer, newer);
+        try
+        {
+            DocumentSigner.ThrowIfSignatureChanged(new byte[] { 1 }, new byte[] { 2 });
+            throw new Exception("different snapshots must be rejected");
+        }
+        catch (IOException) { }
+    }
+
+    // Откреплённый режим затирает документ внутри прикреплённой подписи — только с копией и предупреждением.
+    private static async Task CheckAttachedDocumentIsBackedUp(string root, DocumentSigner signer,
+        X509Certificate2 certA, X509Certificate2 certB, byte[] data)
+    {
+        var dir = Path.Combine(root, "attached");
+        Directory.CreateDirectory(dir);
+        var document = Path.Combine(dir, "контейнер.pdf");
+        var sig = document + ".sig";
+        await File.WriteAllBytesAsync(document, data);
+        var attached = signer.Sign(data, certA, detached: false);
+        await File.WriteAllBytesAsync(sig, attached);
+        Assert(CmsMerger.ExtractContent(attached)!.SequenceEqual(data), "fixture must be an attached signature");
+
+        var vm = ViewModel(dir);
+        await vm.AddFilesAsync(document);
+        var risks = vm.DescribeSignRisks(vm.Files.ToList());
+        Assert(risks is not null && risks.Contains("прикреплённая подпись") && risks.Contains("резервная копия"),
+            "confirmation must warn before an embedded document is removed: " + risks);
+
+        var result = await signer.SignFileAsync(document, certB, new DocumentSigner.SignOptions
+        {
+            Detached = true,
+            MergeWithExisting = true,
+            ExistingSignaturePath = sig,
+        });
+        var backup = result.BackupPath ?? throw new Exception("dropping an embedded document must keep a backup without the checkbox");
+        Assert(CmsMerger.ExtractContent(await File.ReadAllBytesAsync(backup))!.SequenceEqual(data),
+            "backup must still contain the embedded document");
+        var written = await File.ReadAllBytesAsync(sig);
+        Assert(CmsMerger.ExtractContent(written) is null, "detached result has no embedded document");
+        Assert(CmsMerger.CountSigners(written) == 2, "both signers stay after the container becomes detached");
+        var oldValue = SignatureValues(attached)[0];
+        Assert(SignatureValues(written).Any(value => value.SequenceEqual(oldValue)),
+            "the original signature value must survive the detached rewrite");
+    }
+
+    // Просроченный сертификат, отсутствие CRL и недоверие к УЦ не повод выкидывать подписанта.
+    private static void CheckExpiredSignerIsKept(DocumentSigner signer, X509Certificate2 certB, byte[] data)
+    {
+        using var key = RSA.Create(2048);
+        using var expired = new CertificateRequest("CN=Просроченный", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1)
+            .CreateSelfSigned(DateTimeOffset.Now.AddYears(-2), DateTimeOffset.Now.AddDays(-1));
+        var old = signer.Sign(data, expired);
+        var merged = CmsMerger.MergeForDocument(new[] { old, signer.Sign(data, certB) }, data);
+        Assert(merged.ExcludedSigners.Count == 0 && merged.UnverifiedSigners.Count == 0 && merged.SignerCount == 2,
+            "expired certificate must stay in the merge: " + string.Join("; ", merged.ExcludedSigners));
+        var check = SignatureVerifier.Verify(merged.Signature, data, Crypto);
+        Assert(check.Signers.All(s => s.CryptographicallyValid),
+            "cryptographic check must ignore expiry and revocation");
+    }
+
+    private static async Task CheckOddCyrillicNameRoundtrip(string root, DocumentSigner signer,
+        X509Certificate2 certA, X509Certificate2 certB, byte[] data)
+    {
+        var dir = Path.Combine(root, "cyrillic name");
+        Directory.CreateDirectory(dir);
+        var document = Path.Combine(dir, "договор — версия 2 (испр.).pdf");
+        var odd = Path.Combine(dir, "договор — версия 2 (испр.)-.pdf .sig");
+        await File.WriteAllBytesAsync(document, data);
+        var original = signer.Sign(data, certA);
+        await File.WriteAllBytesAsync(odd, original);
+        var vm = ViewModel(dir);
+        await vm.AddFilesAsync(document);
+        Assert(vm.Files.Single().StatusDisplay.Contains("договор — версия 2 (испр.)-.pdf .sig"),
+            "odd Cyrillic name must be offered: " + vm.Files.Single().StatusDisplay);
+        vm.SelectedCertificate = new CertificateItem(certB);
+        await vm.SignAllCommand.ExecuteAsync(null);
+        Assert(vm.Files.Single().Status == SignStatus.Signed, vm.Files.Single().Message ?? "подпись не создана");
+        var written = await File.ReadAllBytesAsync(odd);
+        Assert(!File.Exists(document + ".sig"), "append must not create a second canonical file");
+        Assert(SignatureValues(written).Any(value => value.SequenceEqual(SignatureValues(original)[0])),
+            "Cyrillic path must keep the previous signature bytes");
+    }
+
+    // Файл, открытый без совместного доступа, нельзя затереть обрывком: либо он прежний, либо целая новая подпись.
+    private static async Task CheckLockedSignatureStaysWhole(string root, DocumentSigner signer,
+        X509Certificate2 certA, X509Certificate2 certB, byte[] data)
+    {
+        var dir = Path.Combine(root, "locked");
+        Directory.CreateDirectory(dir);
+        var document = Path.Combine(dir, "занят.pdf");
+        var sig = document + ".sig";
+        await File.WriteAllBytesAsync(document, data);
+        var original = signer.Sign(data, certA);
+        await File.WriteAllBytesAsync(sig, original);
+        using (new FileStream(sig, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            try
+            {
+                await signer.SignFileAsync(document, certB, new DocumentSigner.SignOptions
+                {
+                    Detached = true,
+                    MergeWithExisting = true,
+                    ExistingSignaturePath = sig,
+                });
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Assert(true, "locked file rejected: " + ex.Message);
+            }
+        }
+
+        var after = await File.ReadAllBytesAsync(sig);
+        var intact = after.SequenceEqual(original);
+        var complete = !intact && CmsMerger.CountSigners(after) == 2 && signer.VerifyDetached(data, after);
+        Assert(intact || complete, "a locked signature must stay intact or be replaced by a complete file");
     }
 
     private static async Task CheckSamplesIfPresent(string root)

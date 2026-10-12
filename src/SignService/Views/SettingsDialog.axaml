@@ -3,7 +3,7 @@
         xmlns:vm="using:SignService.ViewModels"
         x:Class="SignService.Views.SettingsDialog"
         x:DataType="vm:MainWindowViewModel"
-        Width="520" SizeToContent="Height"
+        Width="620" SizeToContent="Height"
         CanResize="False"
         WindowStartupLocation="CenterOwner"
         Title="Настройки">
@@ -20,6 +20,13 @@
         <TextBlock TextWrapping="Wrap" FontSize="11"
                    Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
                    Text="Адрес выдаёт оператор службы штампов времени: удостоверяющий центр, выпустивший вашу подпись, или администратор организации (КриптоПро TSP). Для тестов: http://testca2012.cryptopro.ru/tsp/tsp.srf"/>
+
+        <Separator/>
+
+        <TextBlock Text="Файлы подписи" FontWeight="SemiBold"/>
+        <CheckBox IsChecked="{Binding CreateSignatureBackup}"
+                  Content="Всегда создавать резервную копию .sig (.bak) перед подписанием"
+                  ToolTip.Tip="Без галочки копия создаётся только в рискованных случаях: существующий файл подписи заменяется без объединения, из него исключаются подписанты или из прикреплённой подписи пропадает вложенный документ. С галочкой .bak пишется перед каждой перезаписью существующего .sig, в том числе когда подпись просто дописывается."/>
 
         <Separator/>
 

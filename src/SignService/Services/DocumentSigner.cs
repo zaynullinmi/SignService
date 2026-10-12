@@ -28,6 +28,20 @@ public class DocumentSigner
         /// <summary>Объединять ли с уже существующим файлом .sig (соподписание).</summary>
         public bool MergeWithExisting { get; init; }
 
+        /// <summary>
+        /// Сохранять .bak перед любой перезаписью существующего .sig, в том числе
+        /// при обычном дописывании. Без этого копия создаётся только в рискованных
+        /// случаях: замена без объединения, исключение подписантов или потеря
+        /// документа, вложенного в прикреплённую подпись.
+        /// </summary>
+        public bool CreateBackup { get; init; }
+
+        /// <summary>
+        /// Вызывается после подготовки новой подписи и до её записи.
+        /// Нужен тестам, чтобы подменить файл подписи в этот промежуток.
+        /// </summary>
+        internal Action? BeforePublish { get; init; }
+
         /// <summary>Пути к .sig других подписантов для объединения.</summary>
         public IReadOnlyList<string> ExtraSignatures { get; init; } = Array.Empty<string>();
 
@@ -227,9 +241,15 @@ public class DocumentSigner
 
         var appended = inputPaths.Any(path => string.Equals(
             Path.GetFullPath(path), Path.GetFullPath(signaturePath), StringComparison.OrdinalIgnoreCase));
-        var previousSignerCount = appended
-            ? CmsMerger.CountSigners(await File.ReadAllBytesAsync(signaturePath, cancellationToken))
-            : 0;
+        // Снимок того, что вошло в объединение. Перед записью файл читается ещё раз:
+        // за время PIN-кода или пакетного подписания его могли обновить.
+        byte[]? previousBytes = null;
+        var previousSignerCount = 0;
+        if (appended)
+        {
+            previousBytes = await File.ReadAllBytesAsync(signaturePath, cancellationToken);
+            previousSignerCount = CmsMerger.CountSigners(previousBytes);
+        }
 
         int signerCount;
         IReadOnlyList<string> excluded;
@@ -256,13 +276,21 @@ public class DocumentSigner
         cancellationToken.ThrowIfCancellationRequested();
         if (!(await File.ReadAllBytesAsync(targetPath, cancellationToken)).AsSpan().SequenceEqual(data))
             throw new IOException("Документ изменился во время подписания. Подпись не сохранена; повторите операцию.");
-        if (poaPackage is not null) PowerOfAttorneyService.CopyPackage(poaPackage, targetPath);
-        // Резервная копия — только когда прежний файл теряет данные: он заменяется без
-        // объединения или из него исключаются подписанты. Дописанная подпись сохраняет
-        // всех прежних подписантов байт в байт, копия тогда не нужна.
+        options.BeforePublish?.Invoke();
+        // Рискованные случаи — всегда: файл заменяется без объединения, из него
+        // исключаются подписанты или пропадает документ внутри прикреплённой подписи.
+        // Галочка добавляет копию и при обычном дописывании. Если файл успели
+        // изменить после чтения — не пишем ничего, в том числе файлы МЧД.
         string? backupPath = null;
-        if (File.Exists(signaturePath) && (!appended || excluded.Count > 0))
-            backupPath = SignatureBackup.Create(signaturePath);
+        if (File.Exists(signaturePath))
+        {
+            var latest = await File.ReadAllBytesAsync(signaturePath, cancellationToken);
+            ThrowIfSignatureChanged(previousBytes, latest);
+            var riskyOverwrite = !appended || excluded.Count > 0 || LosesEmbeddedDocument(latest, output);
+            if (riskyOverwrite || options.CreateBackup)
+                backupPath = SignatureBackup.Create(signaturePath);
+        }
+        if (poaPackage is not null) PowerOfAttorneyService.CopyPackage(poaPackage, targetPath);
         await AtomicFile.WriteAsync(signaturePath, output, overwrite: true, cancellationToken);
 
         // Режим «копия отдельно»: штампованная копия БЕЗ подписи, со всеми
@@ -292,6 +320,40 @@ public class DocumentSigner
         return new SignFileResult(
             targetPath, signaturePath, signerCount, excluded, unverified, stampedCopyPath,
             previousSignerCount, appended, backupPath);
+    }
+
+    /// <summary>
+    /// Отказ от записи, если файл подписи сменился после того, как его прочитали
+    /// для объединения. Иначе более новая чужая подпись была бы затёрта нашей копией.
+    /// </summary>
+    internal static void ThrowIfSignatureChanged(byte[]? snapshot, byte[] latest)
+    {
+        if (snapshot is not null && !snapshot.AsSpan().SequenceEqual(latest))
+            throw new IOException(
+                "Файл подписи изменился во время подписания. Подпись не сохранена; повторите операцию.");
+    }
+
+    /// <summary>
+    /// true, если в существующей прикреплённой подписи есть документ, а в новой
+    /// записи его не будет или он станет другим. Сами значения подписей при этом
+    /// могут сохраниться — пропадает копия документа внутри .sig.
+    /// </summary>
+    internal static bool LosesEmbeddedDocument(byte[] existing, byte[] output)
+    {
+        byte[]? embedded;
+        try { embedded = CmsMerger.ExtractContent(existing); }
+        catch (Exception) { return true; }
+        if (embedded is null)
+            return false;
+        try
+        {
+            var kept = CmsMerger.ExtractContent(output);
+            return kept is null || !kept.AsSpan().SequenceEqual(embedded);
+        }
+        catch (Exception)
+        {
+            return true;
+        }
     }
 
     /// <summary>

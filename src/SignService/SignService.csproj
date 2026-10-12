@@ -10,7 +10,7 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <AssemblyTitle>SignService — подписание документов ЭЦП</AssemblyTitle>
     <Product>SignService</Product>
-    <Version>1.3.0</Version>
+    <Version>1.3.3</Version>
     <Authors>Зайнуллин Марат Илгамович</Authors>
     <Company>Зайнуллин Марат Илгамович</Company>
     <Copyright>© 2026 Зайнуллин Марат Илгамович, +7-963-694-2461, zaynullinmi@gmail.com</Copyright>
