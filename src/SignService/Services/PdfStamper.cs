@@ -121,7 +121,8 @@ public static class PdfStamper
         // Сначала в память, затем атомарно: сбой записи не оставит обрезанный PDF.
         using var buffer = new MemoryStream();
         document.Save(buffer, closeStream: false);
-        AtomicFile.Write(outputPath, buffer.ToArray(), overwrite: true);
+        AtomicFile.Write(outputPath, buffer.ToArray(), overwrite: true,
+            beforeCommit: () => DocumentStamper.ThrowIfCopySigned(pdfPath));
         return outputPath;
     }
 

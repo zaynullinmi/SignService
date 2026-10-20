@@ -49,6 +49,8 @@ is published on the [Releases](https://github.com/zaynullinmi/SignService/releas
 - before replacing a signature file without merging and before excluding
   signers the app asks for confirmation and keeps a backup next to it; the
   result shows in the file row: "Подписан: 9 (8 + ваша) → X.sig";
+- if the destination signature changes, disappears or appears during signing,
+  publication stops and preserves the other version, in both signing modes;
 - re-signing with the same certificate **replaces** your previous signature
   instead of duplicating it;
 - every merged signature is **cryptographically verified**, including the

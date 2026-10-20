@@ -95,7 +95,8 @@ public static class WordStamper
             }
         }
 
-        AtomicFile.Write(outputPath, buffer.ToArray(), overwrite: true);
+        AtomicFile.Write(outputPath, buffer.ToArray(), overwrite: true,
+            beforeCommit: () => DocumentStamper.ThrowIfCopySigned(docPath));
         return outputPath;
     }
 

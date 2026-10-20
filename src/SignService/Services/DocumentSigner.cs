@@ -42,6 +42,9 @@ public class DocumentSigner
         /// </summary>
         internal Action? BeforePublish { get; init; }
 
+        // Позволяет воспроизвести внешнее изменение после чтения входов, до подписи.
+        internal Action? AfterSignatureInputsRead { get; init; }
+
         /// <summary>Пути к .sig других подписантов для объединения.</summary>
         public IReadOnlyList<string> ExtraSignatures { get; init; } = Array.Empty<string>();
 
@@ -201,25 +204,14 @@ public class DocumentSigner
             : null;
         var signaturePath = options.MergeWithExisting
             && !string.IsNullOrWhiteSpace(existingSignaturePath)
-            && File.Exists(existingSignaturePath)
             ? existingSignaturePath
             : canonicalSignaturePath;
 
-        // Свою подпись создаём ДО чтения объединяемых файлов, чтобы ошибка
-        // подписания не оставила .sig наполовину обработанным.
-        var own = Sign(data, certificate, options.Detached);
-
-        // Штамп времени TSA (CAdES-T) — неподписанный атрибут на значение подписи.
-        if (options.Timestamp)
-        {
-            if (string.IsNullOrWhiteSpace(options.TsaUrl))
-                throw new InvalidOperationException(
-                    "Для подписи со штампом времени укажите адрес службы штампов времени (TSA).");
-
-            var token = await _timestampClient.RequestTokenAsync(
-                CmsMerger.GetSignatureValue(own), IsGost(certificate), options.TsaUrl, cancellationToken);
-            own = CmsMerger.AddUnsignedAttribute(own, TimestampClient.TimeStampTokenOid, token);
-        }
+        // Один снимок назначения — и для объединения, и для контроля изменений.
+        // Читаем до PIN/TSA, в том числе в режиме замены без объединения.
+        var previousBytes = await ReadExistingSignatureAsync(signaturePath, cancellationToken);
+        if (options.MergeWithExisting && !string.IsNullOrWhiteSpace(existingSignaturePath) && previousBytes is null)
+            throw new IOException("Выбранный файл подписи больше не существует. Повторите поиск подписей.");
 
         var inputPaths = new List<string>();
         void AddInputPath(string? path)
@@ -235,7 +227,7 @@ public class DocumentSigner
         if (options.MergeWithExisting)
         {
             if (!string.IsNullOrWhiteSpace(existingSignaturePath))
-                AddInputPath(existingSignaturePath);
+                inputPaths.Add(existingSignaturePath);
             else
                 AddInputPath(canonicalSignaturePath);
         }
@@ -245,20 +237,25 @@ public class DocumentSigner
 
         var inputs = new List<byte[]>();
         foreach (var path in inputPaths)
-            inputs.Add(await File.ReadAllBytesAsync(path, cancellationToken));
-        inputs.Add(own); // своя — последней: при совпадении подписанта она побеждает
+            inputs.Add(SignatureDiscovery.SamePath(path, signaturePath) && previousBytes is not null
+                ? previousBytes : await File.ReadAllBytesAsync(path, cancellationToken));
 
         var appended = inputPaths.Any(path => string.Equals(
             Path.GetFullPath(path), Path.GetFullPath(signaturePath), StringComparison.OrdinalIgnoreCase));
-        // Снимок того, что вошло в объединение. Перед записью файл читается ещё раз:
-        // за время PIN-кода или пакетного подписания его могли обновить.
-        byte[]? previousBytes = null;
-        var previousSignerCount = 0;
-        if (appended)
+        var previousSignerCount = appended && previousBytes is not null ? CmsMerger.CountSigners(previousBytes) : 0;
+        options.AfterSignatureInputsRead?.Invoke();
+
+        var own = Sign(data, certificate, options.Detached);
+        if (options.Timestamp)
         {
-            previousBytes = await File.ReadAllBytesAsync(signaturePath, cancellationToken);
-            previousSignerCount = CmsMerger.CountSigners(previousBytes);
+            if (string.IsNullOrWhiteSpace(options.TsaUrl))
+                throw new InvalidOperationException(
+                    "Для подписи со штампом времени укажите адрес службы штампов времени (TSA).");
+            var token = await _timestampClient.RequestTokenAsync(
+                CmsMerger.GetSignatureValue(own), IsGost(certificate), options.TsaUrl, cancellationToken);
+            own = CmsMerger.AddUnsignedAttribute(own, TimestampClient.TimeStampTokenOid, token);
         }
+        inputs.Add(own); // своя — последней: при совпадении подписанта она побеждает
 
         int signerCount;
         IReadOnlyList<string> excluded;
@@ -291,16 +288,17 @@ public class DocumentSigner
         // Галочка добавляет копию и при обычном дописывании. Если файл успели
         // изменить после чтения — не пишем ничего, в том числе файлы МЧД.
         string? backupPath = null;
-        if (File.Exists(signaturePath))
+        var latest = await ReadExistingSignatureAsync(signaturePath, cancellationToken);
+        ThrowIfSignatureChanged(previousBytes, latest);
+        if (latest is not null)
         {
-            var latest = await File.ReadAllBytesAsync(signaturePath, cancellationToken);
-            ThrowIfSignatureChanged(previousBytes, latest);
             var riskyOverwrite = !appended || excluded.Count > 0 || LosesEmbeddedDocument(latest, output);
             if (riskyOverwrite || options.CreateBackup)
                 backupPath = SignatureBackup.Create(signaturePath);
         }
         if (poaPackage is not null) PowerOfAttorneyService.CopyPackage(poaPackage, targetPath);
-        await AtomicFile.WriteAsync(signaturePath, output, overwrite: true, cancellationToken);
+        await AtomicFile.WriteAsync(signaturePath, output, overwrite: previousBytes is not null, cancellationToken,
+            beforeCommit: () => ThrowIfSignatureChanged(previousBytes, ReadExistingSignature(signaturePath)));
 
         // Режим «копия отдельно»: штампованная копия БЕЗ подписи с подписантами
         // итогового .sig — пересоздаётся после каждого подписания. Плашки — только
@@ -341,11 +339,25 @@ public class DocumentSigner
     /// Отказ от записи, если файл подписи сменился после того, как его прочитали
     /// для объединения. Иначе более новая чужая подпись была бы затёрта нашей копией.
     /// </summary>
-    internal static void ThrowIfSignatureChanged(byte[]? snapshot, byte[] latest)
+    internal static void ThrowIfSignatureChanged(byte[]? snapshot, byte[]? latest)
     {
-        if (snapshot is not null && !snapshot.AsSpan().SequenceEqual(latest))
+        if (snapshot is null ? latest is not null : latest is null || !snapshot.AsSpan().SequenceEqual(latest))
             throw new IOException(
                 "Файл подписи изменился во время подписания. Подпись не сохранена; повторите операцию.");
+    }
+
+    private static async Task<byte[]?> ReadExistingSignatureAsync(string path, CancellationToken cancellationToken)
+    {
+        try { return await File.ReadAllBytesAsync(path, cancellationToken); }
+        catch (FileNotFoundException) { return null; }
+        catch (DirectoryNotFoundException) { return null; }
+    }
+
+    private static byte[]? ReadExistingSignature(string path)
+    {
+        try { return File.ReadAllBytes(path); }
+        catch (FileNotFoundException) { return null; }
+        catch (DirectoryNotFoundException) { return null; }
     }
 
     /// <summary>

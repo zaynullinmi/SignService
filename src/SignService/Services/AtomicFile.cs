@@ -8,7 +8,7 @@ namespace SignService.Services;
 internal static class AtomicFile
 {
     public static async Task WriteAsync(string path, byte[] bytes, bool overwrite = true,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, Action? beforeCommit = null)
     {
         var fullPath = Path.GetFullPath(path);
         var temporary = Path.Combine(Path.GetDirectoryName(fullPath)!, ".signservice-" + Guid.NewGuid().ToString("N") + ".tmp");
@@ -22,6 +22,7 @@ internal static class AtomicFile
                 stream.Flush(flushToDisk: true);
             }
             cancellationToken.ThrowIfCancellationRequested();
+            beforeCommit?.Invoke();
             File.Move(temporary, fullPath, overwrite);
         }
         finally
@@ -30,6 +31,6 @@ internal static class AtomicFile
         }
     }
 
-    public static void Write(string path, byte[] bytes, bool overwrite = false) =>
-        WriteAsync(path, bytes, overwrite).GetAwaiter().GetResult();
+    public static void Write(string path, byte[] bytes, bool overwrite = false, Action? beforeCommit = null) =>
+        WriteAsync(path, bytes, overwrite, beforeCommit: beforeCommit).GetAwaiter().GetResult();
 }
