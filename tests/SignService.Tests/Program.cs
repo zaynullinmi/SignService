@@ -828,6 +828,7 @@ await VerificationTests.RunAsync(tempRoot);
 await ReviewRegressionTests.RunAsync(tempRoot, signer);
 await CoSignTests.RunAsync(tempRoot, signer);
 await WordStampTests.RunAsync(tempRoot, signer);
+await PublicationSafetyTests.RunAsync(tempRoot, signer);
 UiSmokeTests.Run(tempRoot);
 try { Directory.Delete(tempRoot, true); } catch { }
 Console.WriteLine("ALL TESTS PASSED");

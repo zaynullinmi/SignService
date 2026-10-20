@@ -20,17 +20,35 @@ public static class DocumentStamper
         WordStamper.IsWord(filePath) ? WordStamper.StampedCopyPath(filePath) : PdfStamper.StampedCopyPath(filePath);
 
     /// <summary>
-    /// Отказ, если у копии со штампом есть своя подпись («… (со штампом).pdf.sig»):
+    /// Отказ, если у копии со штампом есть своя подпись (в том числе с другим именем):
     /// новая копия — другой файл, и та подпись перестала бы ему соответствовать.
     /// </summary>
     public static void ThrowIfCopySigned(string filePath)
     {
         var copy = StampedCopyPath(filePath);
-        if (!File.Exists(copy + ".sig"))
+        var signature = new[] { ".sig", ".p7s", ".p7m" }
+            .Select(extension => copy + extension).FirstOrDefault(File.Exists);
+        if (signature is null && File.Exists(copy))
+        {
+            var digests = new DocumentDigests(File.ReadAllBytes(copy));
+            var directory = Path.GetDirectoryName(Path.GetFullPath(copy))!;
+            foreach (var candidate in Directory.EnumerateFiles(directory).Where(SignatureDiscovery.IsSignatureFile))
+            {
+                var report = SignatureVerifier.VerifyWithDigests(File.ReadAllBytes(candidate), digests,
+                    VerificationOptions.CryptographyOnly);
+                // Не затираем и при неопределённой криптопроверке, если хеш документа совпал.
+                if (!report.Signers.Any(s => s.Document.State == VerificationState.Valid
+                        && s.Signature.State != VerificationState.Invalid))
+                    continue;
+                signature = candidate;
+                break;
+            }
+        }
+        if (signature is null)
             return;
         var name = Path.GetFileName(copy);
         throw new InvalidOperationException(
-            $"Копия «{name}» уже подписана («{name}.sig»), новая копия со штампом сделала бы эту подпись " +
+            $"Копия «{name}» уже подписана («{Path.GetFileName(signature)}»), новая копия со штампом сделала бы эту подпись " +
             $"недействительной. Чтобы добавить подпись к копии, подпишите сам файл «{name}» без штампа; " +
             "чтобы сделать копию заново, удалите или переименуйте её файл подписи.");
     }
