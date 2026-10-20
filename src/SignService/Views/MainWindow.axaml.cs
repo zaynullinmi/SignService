@@ -113,7 +113,9 @@ public partial class MainWindow : Window
 
             if (item is IStorageFolder && Directory.Exists(path))
             {
-                foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+                // Недоступная подпапка (нет прав, системная) пропускается, а не обрывает всё перетаскивание.
+                var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
+                foreach (var file in Directory.EnumerateFiles(path, "*", options))
                     yield return file;
             }
             else if (File.Exists(path))

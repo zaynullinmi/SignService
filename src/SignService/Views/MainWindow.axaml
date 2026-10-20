@@ -11,8 +11,9 @@
 
     <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto">
 
-        <!-- Выбор сертификата -->
-        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto" Margin="0,0,0,8">
+        <!-- Выбор сертификата (во время подписания пакета параметры не меняются) -->
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto" Margin="0,0,0,8"
+              IsEnabled="{Binding !IsBusy}">
             <TextBlock Grid.Column="0" Text="Сертификат:" VerticalAlignment="Center" Margin="0,0,8,0"/>
             <ComboBox Grid.Column="1"
                       ItemsSource="{Binding Certificates}"
@@ -60,7 +61,7 @@
         </Grid>
 
         <!-- Параметры подписи -->
-        <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
+        <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8" IsEnabled="{Binding !IsBusy}">
             <RadioButton GroupName="SigMode" Margin="0,0,16,4"
                          IsChecked="{Binding IsDetached}"
                          Content="Откреплённая подпись (.sig рядом с файлом)"
@@ -86,7 +87,7 @@
         </WrapPanel>
 
         <!-- Доверенность (МЧД) -->
-        <WrapPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
+        <WrapPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8" IsEnabled="{Binding !IsBusy}">
             <TextBlock Text="Доверенность (МЧД):" VerticalAlignment="Center" Margin="0,0,8,4"/>
             <Button Margin="0,0,8,4" Padding="8,3"
                     Content="Добавить доверенность…"
@@ -129,6 +130,7 @@
             </Button>
             <CheckBox Grid.Column="2" Margin="12,0,0,0" VerticalAlignment="Center"
                       IsChecked="{Binding ApplyCoSignToAll}"
+                      IsEnabled="{Binding !IsBusy}"
                       Content="Применить ко всем"
                       ToolTip.Tip="Все файлы берут режим первого в списке: «Создать новую» или «Добавить к существующей». Если подходящей подписи нет, строка остаётся на «Создать новую» и пишет об этом. Галочка запоминается."/>
             <Button Grid.Column="4" Content="Очистить список" Command="{Binding ClearCommand}"
@@ -299,8 +301,10 @@
                        Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
             <Button Grid.Column="2" Name="SettingsButton" Padding="8,2" Margin="0,0,8,0"
                     Content="Настройки…"
+                    IsEnabled="{Binding !IsBusy}"
                     ToolTip.Tip="Резервная копия .sig, штамп времени (CAdES-T) и адрес службы TSA"/>
             <Button Grid.Column="3" Name="AboutButton" Padding="8,2" Content="О программе"
+                    IsEnabled="{Binding !IsBusy}"
                     ToolTip.Tip="Версия, автор, история версий и обновления"/>
         </Grid>
     </Grid>

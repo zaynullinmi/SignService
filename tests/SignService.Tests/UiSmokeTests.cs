@@ -172,11 +172,25 @@ internal static class UiSmokeTests
         vm.IsBusy = true;
         Dispatcher.UIThread.RunJobs();
         Assert(!combo.IsEnabled, "co-sign choice must be locked while signing");
+        // параметры пакета и очередь не меняются посреди подписания (обход подтверждения)
+        var detached = window.GetVisualDescendants().OfType<RadioButton>()
+            .First(r => r.Content?.ToString()?.StartsWith("Откреплённая") == true);
+        var applyToAll = window.GetVisualDescendants().OfType<CheckBox>().First(c => c.Content?.ToString() == "Применить ко всем");
+        Assert(!detached.IsEffectivelyEnabled && !applyToAll.IsEffectivelyEnabled,
+            "signing options must be locked while signing");
+        Assert(!vm.RemoveFileCommand.CanExecute(vm.Files.First()) && !vm.AddPoaCommand.CanExecute(null),
+            "the queue and МЧД must be locked while signing");
         vm.IsBusy = false;
+        Dispatcher.UIThread.RunJobs();
+        Assert(detached.IsEffectivelyEnabled && vm.RemoveFileCommand.CanExecute(vm.Files.First()) && vm.AddPoaCommand.CanExecute(null),
+            "options unlock after signing");
         var frame = window.CaptureRenderedFrame() ?? throw new Exception("co-sign row must render");
-        var shot = Path.Combine("/opt/cursor/artifacts", "main-window.png");
-        Directory.CreateDirectory(Path.GetDirectoryName(shot)!);
-        frame.Save(shot);
+        if (Environment.GetEnvironmentVariable("SIGNSERVICE_TEST_OUTPUT") is { Length: > 0 } output)
+        {
+            Directory.CreateDirectory(output);
+            frame.Save(Path.Combine(output, "main-window.png"));
+        }
+
         frame.Dispose();
         window.Close();
     }

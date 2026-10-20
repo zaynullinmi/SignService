@@ -188,6 +188,8 @@ public partial class MainWindowViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildContainerItemCommand))]
     [NotifyCanExecuteChangedFor(nameof(SplitItemCommand))]
     [NotifyCanExecuteChangedFor(nameof(RemoveSignerItemCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RemoveFileCommand))]
+    [NotifyCanExecuteChangedFor(nameof(AddPoaCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -816,6 +818,15 @@ public partial class MainWindowViewModel : ObservableObject
         if (added.Count > 0)
             StatusText = $"Добавлено файлов: {added.Count}. Всего в очереди: {Files.Count}";
 
+        // Подписи к файлам, которые уже подписываются, не прикладываем: в текущий
+        // пакет они не попадут, а строка показывала бы их как приложенные.
+        if (IsBusy && signatures.Count > 0)
+        {
+            Log("Подписи не приложены — идёт подписание; перетащите их после окончания: "
+                + string.Join(", ", signatures.Select(path => "«" + System.IO.Path.GetFileName(path) + "»")));
+            signatures.Clear();
+        }
+
         // Новые документы ищут подписи в своей папке; перетащенные подписи сверяются со всей
         // очередью. Во время подписания план уже стоявших файлов не меняется.
         var targets = signatures.Count > 0 ? Files.ToList() : added;
@@ -1319,7 +1330,8 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
+    // Во время подписания очередь не меняется: убранный файл всё равно был бы подписан.
+    [RelayCommand(CanExecute = nameof(CanBrowse))]
     private void RemoveFile(SignFileItem item)
     {
         Files.Remove(item);
@@ -1525,6 +1537,8 @@ public partial class MainWindowViewModel : ObservableObject
 
             foreach (var file in pending)
             {
+                if (!Files.Contains(file))
+                    continue;
                 file.Warning = null;
                 file.Status = SignStatus.Signing;
                 StatusText = $"Подписание: {file.FileName}";
