@@ -18,6 +18,10 @@
                      IsEnabled="{Binding #PagesCustom.IsChecked}"/>
         </StackPanel>
 
+        <TextBlock TextWrapping="Wrap" FontSize="12"
+                   Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                   Text="В документе Word страниц нет до вывода на экран или печать, поэтому «последняя» и «указанные» — плашки в конце текста, «первая» — в нижнем колонтитуле первой страницы, «все» — в нижних колонтитулах."/>
+
         <CheckBox Name="WithDateBox" Content="с датой подписания" IsChecked="True"/>
 
         <StackPanel Orientation="Horizontal" Spacing="8">

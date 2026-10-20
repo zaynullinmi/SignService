@@ -393,7 +393,7 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     // В режиме «подписывать копию со штампом» найденные подписи оригинала к подписи не относятся.
-    private bool SignsStampedCopy(SignFileItem file) => UseStamp && StampSignCopy && PdfStamper.IsPdf(file.FilePath);
+    private bool SignsStampedCopy(SignFileItem file) => UseStamp && StampSignCopy && DocumentStamper.IsSupported(file.FilePath);
 
     private void UpdateStampedCopyMode()
     {
@@ -1014,28 +1014,29 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Ставит визуальный штамп на PDF без подписания. Если рядом с документом
+    /// Ставит визуальный штамп на PDF или документ Word без подписания. Если рядом с документом
     /// есть «имя.sig», плашки ставятся для ВСЕХ его подписантов; иначе —
     /// по данным выбранного сертификата.
     /// </summary>
-    public async Task StampWithoutSigningAsync(IReadOnlyList<string> pdfPaths, PdfStamper.StampOptions options,
+    public async Task StampWithoutSigningAsync(IReadOnlyList<string> paths, PdfStamper.StampOptions options,
         string? signatureHint = null)
     {
-        if (pdfPaths.Count == 0 || SelectedCertificate is not { } item)
+        if (paths.Count == 0 || SelectedCertificate is not { } item)
             return;
 
         options = options with { PoaNumber = options.PoaNumber ?? Poa?.Number };
         IsBusy = true;
         try
         {
-            foreach (var path in pdfPaths)
+            foreach (var path in paths)
             {
                 var name = System.IO.Path.GetFileName(path);
                 try
                 {
-                    if (!PdfStamper.IsPdf(path))
+                    var note = DocumentStamper.Note(path, options);
+                    if (!DocumentStamper.IsSupported(path))
                     {
-                        Log($"«{name}»: пропущен (не PDF)");
+                        Log($"«{name}»: пропущен — {note}");
                         continue;
                     }
 
@@ -1047,7 +1048,7 @@ public partial class MainWindowViewModel : ObservableObject
                             : Array.Empty<System.Security.Cryptography.X509Certificates.X509Certificate2>();
                         try
                         {
-                            return PdfStamper.CreateStampedCopy(
+                            return DocumentStamper.CreateStampedCopy(
                                 path,
                                 certs.Count > 0 ? certs : new[] { item.Certificate },
                                 options,
@@ -1059,7 +1060,8 @@ public partial class MainWindowViewModel : ObservableObject
                                 c.Dispose();
                         }
                     });
-                    Log($"Штамп без подписания: «{name}» → «{System.IO.Path.GetFileName(stamped)}»");
+                    Log($"Штамп без подписания: «{name}» → «{System.IO.Path.GetFileName(stamped)}»"
+                        + (note is null ? "" : $" ({note})"));
                 }
                 catch (Exception ex)
                 {
@@ -1553,13 +1555,15 @@ public partial class MainWindowViewModel : ObservableObject
 
                     file.Status = SignStatus.Signed;
                     signed++;
+                    var stampNote = stampParameters is null ? null : DocumentStamper.Note(file.FilePath, stampParameters);
                     Log($"  [OK] {file.FileName} → {file.StatusDisplay}"
                         + (result.BackupPath is null
                             ? ""
                             : $". Резервная копия: {System.IO.Path.GetFileName(result.BackupPath)}")
                         + (result.StampedCopyPath is null
                             ? ""
-                            : $"; копия со штампом (без подписи): {System.IO.Path.GetFileName(result.StampedCopyPath)}"));
+                            : $"; копия со штампом (без подписи): {System.IO.Path.GetFileName(result.StampedCopyPath)}")
+                        + (stampNote is null ? "" : $"; {stampNote}"));
                 }
                 catch (Exception ex)
                 {

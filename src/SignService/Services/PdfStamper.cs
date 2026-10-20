@@ -28,6 +28,11 @@ public static class PdfStamper
     public static bool IsPdf(string filePath) =>
         Path.GetExtension(filePath).Equals(".pdf", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>«имя (со штампом).pdf» рядом с документом.</summary>
+    public static string StampedCopyPath(string pdfPath) =>
+        Path.Combine(Path.GetDirectoryName(pdfPath) ?? ".",
+            $"{Path.GetFileNameWithoutExtension(pdfPath)} (со штампом).pdf");
+
     /// <summary>На каких страницах ставить штампы.</summary>
     public enum StampPages
     {
@@ -88,9 +93,7 @@ public static class PdfStamper
         if (certificates.Count == 0)
             throw new ArgumentException("Нет сертификатов для штампа.", nameof(certificates));
 
-        var directory = Path.GetDirectoryName(pdfPath) ?? ".";
-        var stem = Path.GetFileNameWithoutExtension(pdfPath);
-        var outputPath = Path.Combine(directory, $"{stem} (со штампом).pdf");
+        var outputPath = StampedCopyPath(pdfPath);
 
         using var document = PdfReader.Open(pdfPath, PdfDocumentOpenMode.Modify);
         foreach (var pageIndex in ResolvePages(options, document.Pages.Count))
@@ -100,7 +103,10 @@ public static class PdfStamper
             DrawStampsOnPage(gfx, page, certificates, options, signTime);
         }
 
-        document.Save(outputPath);
+        // Сначала в память, затем атомарно: сбой записи не оставит обрезанный PDF.
+        using var buffer = new MemoryStream();
+        document.Save(buffer, closeStream: false);
+        AtomicFile.Write(outputPath, buffer.ToArray(), overwrite: true);
         return outputPath;
     }
 
@@ -165,7 +171,13 @@ public static class PdfStamper
         }
     }
 
-    private static List<string> StampLines(X509Certificate2 certificate, StampOptions options)
+    internal const string TitleLine1 = "ДОКУМЕНТ ПОДПИСАН";
+    internal const string TitleLine2 = "ЭЛЕКТРОННОЙ ПОДПИСЬЮ";
+
+    internal static string DateLine(DateTime signTime) => $"Дата подписания: {signTime:dd.MM.yyyy HH:mm}";
+
+    /// <summary>Строки плашки (общие для PDF и Word): сертификат, владелец, срок, МЧД.</summary>
+    internal static List<string> StampLines(X509Certificate2 certificate, StampOptions options)
     {
         var lines = new List<string>
         {
@@ -199,7 +211,7 @@ public static class PdfStamper
         var textFont = new XFont("stamp", 7, XFontStyleEx.Regular);
 
         var lines = StampLines(certificate, options);
-        var dateLine = options.WithDate ? $"Дата подписания: {signTime:dd.MM.yyyy HH:mm}" : null;
+        var dateLine = options.WithDate ? DateLine(signTime) : null;
         var logoPath = options.LogoPath;
 
         const double pad = StampPad;
@@ -232,9 +244,9 @@ public static class PdfStamper
 
         // Заголовок
         var titleRect = new XRect(contentX, topY, x + width - pad - contentX, titleHeight + 4);
-        gfx.DrawString("ДОКУМЕНТ ПОДПИСАН", titleFont, new XSolidBrush(blue),
+        gfx.DrawString(TitleLine1, titleFont, new XSolidBrush(blue),
             new XRect(titleRect.X, titleRect.Y, titleRect.Width, 12), XStringFormats.TopLeft);
-        gfx.DrawString("ЭЛЕКТРОННОЙ ПОДПИСЬЮ", titleFont, new XSolidBrush(blue),
+        gfx.DrawString(TitleLine2, titleFont, new XSolidBrush(blue),
             new XRect(titleRect.X, titleRect.Y + 11, titleRect.Width, 12), XStringFormats.TopLeft);
 
         // Текст
@@ -263,7 +275,9 @@ public static class PdfStamper
 
         try
         {
-            using var bitmap = SkiaSharp.SKBitmap.Decode(path);
+            // из потока: путь с кириллицей не зависит от того, как Skia открывает файлы
+            using var file = File.OpenRead(path);
+            using var bitmap = SkiaSharp.SKBitmap.Decode(file);
             if (bitmap is null)
                 return null;
 

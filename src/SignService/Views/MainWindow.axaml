@@ -81,8 +81,8 @@
                       Content="Показывать просроченные сертификаты"/>
             <CheckBox Margin="0,0,0,4"
                       IsChecked="{Binding UseStamp}"
-                      Content="Штамп на документ (PDF)"
-                      ToolTip.Tip="Перед подписанием откроется диалог параметров штампа (страницы, дата, лого). По умолчанию подписывается ОРИГИНАЛ, а копия «имя (со штампом).pdf» — отдельный файл без подписи с плашками всех подписантов (безопасно при соподписании)."/>
+                      Content="Штамп на документ (PDF, Word)"
+                      ToolTip.Tip="Перед подписанием откроется диалог параметров штампа (страницы, дата, лого). Штамп ставится на PDF и документы Word (.docx, .docm). По умолчанию подписывается ОРИГИНАЛ, а копия «имя (со штампом).pdf» или «имя (со штампом).docx» — отдельный файл без подписи с плашками всех подписантов (безопасно при соподписании)."/>
         </WrapPanel>
 
         <!-- Доверенность (МЧД) -->
@@ -91,7 +91,7 @@
             <Button Margin="0,0,8,4" Padding="8,3"
                     Content="Добавить доверенность…"
                     Command="{Binding AddPoaCommand}"
-                    ToolTip.Tip="Как в Контуре: выберите файл МЧД (XML) и подпись руководителя (.sig). Программа проверит подпись, срок действия и соответствие представителя вашему сертификату. Файлы МЧД будут скопированы рядом с подписанным документом, номер МЧД попадёт в штамп на PDF."/>
+                    ToolTip.Tip="Как в Контуре: выберите файл МЧД (XML) и подпись руководителя (.sig). Программа проверит подпись, срок действия и соответствие представителя вашему сертификату. Файлы МЧД будут скопированы рядом с подписанным документом, номер МЧД попадёт в штамп на документе."/>
             <TextBlock Margin="0,0,8,4" VerticalAlignment="Center"
                        Text="{Binding PoaDisplay}"
                        Foreground="{DynamicResource SystemAccentColor}"
@@ -122,7 +122,7 @@
                                   Command="{Binding RemoveSignerCommand}"/>
                         <MenuItem Header="Собрать контейнер… (документ + подписи в один .sig)"
                                   Command="{Binding BuildContainerCommand}"/>
-                        <MenuItem Header="Штамп на PDF… (копия со штампом без подписания)"
+                        <MenuItem Header="Штамп на PDF/Word… (копия со штампом без подписания)"
                                   Command="{Binding StampOnlyCommand}"/>
                     </MenuFlyout>
                 </Button.Flyout>
@@ -180,7 +180,7 @@
                                                       Command="{Binding Owner.AttachSignaturesCommand}"
                                                       CommandParameter="{Binding}"/>
                                             <Separator/>
-                                            <MenuItem Header="Штамп на PDF (копия без подписи)…"
+                                            <MenuItem Header="Штамп на документ (копия без подписи)…"
                                                       Command="{Binding Owner.StampItemCommand}"
                                                       CommandParameter="{Binding}"/>
                                             <MenuItem Header="Извлечь из контейнера (.sig рядом)"
