@@ -1,6 +1,6 @@
 // Интеграционные тесты SignService: Стрибог, подпись CAdES-BES, соподписание,
 // нормализация BER, извлечение из контейнера, штамп времени (CAdES-T, локальный
-// TSA-ответчик на openssl), визуальный штамп на PDF и объединение без подписания.
+// TSA-ответчик на openssl), визуальный штамп на PDF и Word и объединение без подписания.
 // Запуск: dotnet run --project tests/SignService.Tests -c Release
 // Криптография — managed-путь (RSA); нативный ГОСТ-путь (CryptSignMessage)
 // проверяется вручную на Windows с КриптоПро.
@@ -363,6 +363,20 @@ Console.WriteLine("PDF stamp (sign-copy mode): stamped copy signed, verifies ove
 // при соподписании штамп отражает всех подписантов и не ломает подписи
 var origBytes = await File.ReadAllBytesAsync(pdfPath);
 File.Delete(pdfPath + ".sig");
+// подписанная копия со штампом не перезаписывается: её подпись сломалась бы
+try
+{
+    await signer.SignFileAsync(pdfPath, cert, new DocumentSigner.SignOptions { Detached = true, Stamp = true });
+    throw new Exception("a signed stamped copy must not be overwritten");
+}
+catch (InvalidOperationException e) when (e.Message.Contains("уже подписана"))
+{
+}
+if (File.Exists(pdfPath + ".sig")) throw new Exception("nothing must be signed when the copy is protected");
+cmsStamp.Decode(await File.ReadAllBytesAsync(stampedPath + ".sig"));
+cmsStamp.CheckSignature(verifySignatureOnly: true); // копия и её подпись целы
+Console.WriteLine("PDF stamp: signed stamped copy is protected from re-stamping: OK");
+File.Delete(stampedPath + ".sig");
 File.Delete(stampedPath);
 var sep1 = await signer.SignFileAsync(pdfPath, cert, new DocumentSigner.SignOptions
 {
@@ -418,12 +432,18 @@ var fakePdf = Path.Combine(pdfDir, "битый.pdf");
 await File.WriteAllBytesAsync(fakePdf, new byte[] { 1, 2, 3 });
 try
 {
-    await signer.SignFileAsync(fakePdf, cert, new DocumentSigner.SignOptions { Stamp = true });
-    throw new Exception("broken PDF must fail");
+    await signer.SignFileAsync(fakePdf, cert, new DocumentSigner.SignOptions { Stamp = true, StampSignCopy = true });
+    throw new Exception("broken PDF must fail in sign-copy mode");
 }
 catch (InvalidOperationException e) when (e.Message.Contains("штамп"))
 {
 }
+if (File.Exists(fakePdf + ".sig")) throw new Exception("sign-copy mode: nothing is signed when the stamp fails");
+// копия отдельно: подпись уже записана — сбой копии не превращает подписание в ошибку
+var brokenCopy = await signer.SignFileAsync(fakePdf, cert, new DocumentSigner.SignOptions { Stamp = true });
+if (!File.Exists(brokenCopy.SignaturePath) || brokenCopy.StampedCopyPath is not null
+    || brokenCopy.StampWarning?.Contains("не удалось") != true)
+    throw new Exception("separate mode: a failed stamped copy must be a warning: " + brokenCopy.StampWarning);
 Console.WriteLine("PDF stamp variants (no date/logo, non-PDF, broken PDF): OK");
 
 // ===== 12. Объединение подписей без подписания =====
@@ -807,6 +827,7 @@ Console.WriteLine("verify: text report format: OK");
 await VerificationTests.RunAsync(tempRoot);
 await ReviewRegressionTests.RunAsync(tempRoot, signer);
 await CoSignTests.RunAsync(tempRoot, signer);
+await WordStampTests.RunAsync(tempRoot, signer);
 UiSmokeTests.Run(tempRoot);
 try { Directory.Delete(tempRoot, true); } catch { }
 Console.WriteLine("ALL TESTS PASSED");

@@ -11,8 +11,9 @@
 
     <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto">
 
-        <!-- Выбор сертификата -->
-        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto" Margin="0,0,0,8">
+        <!-- Выбор сертификата (во время подписания пакета параметры не меняются) -->
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto" Margin="0,0,0,8"
+              IsEnabled="{Binding !IsBusy}">
             <TextBlock Grid.Column="0" Text="Сертификат:" VerticalAlignment="Center" Margin="0,0,8,0"/>
             <ComboBox Grid.Column="1"
                       ItemsSource="{Binding Certificates}"
@@ -60,7 +61,7 @@
         </Grid>
 
         <!-- Параметры подписи -->
-        <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
+        <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8" IsEnabled="{Binding !IsBusy}">
             <RadioButton GroupName="SigMode" Margin="0,0,16,4"
                          IsChecked="{Binding IsDetached}"
                          Content="Откреплённая подпись (.sig рядом с файлом)"
@@ -81,17 +82,17 @@
                       Content="Показывать просроченные сертификаты"/>
             <CheckBox Margin="0,0,0,4"
                       IsChecked="{Binding UseStamp}"
-                      Content="Штамп на документ (PDF)"
-                      ToolTip.Tip="Перед подписанием откроется диалог параметров штампа (страницы, дата, лого). По умолчанию подписывается ОРИГИНАЛ, а копия «имя (со штампом).pdf» — отдельный файл без подписи с плашками всех подписантов (безопасно при соподписании)."/>
+                      Content="Штамп на документ (PDF, Word)"
+                      ToolTip.Tip="Перед подписанием откроется диалог параметров штампа (страницы, дата, лого). Штамп ставится на PDF и документы Word (.docx, .docm). По умолчанию подписывается ОРИГИНАЛ, а копия «имя (со штампом).pdf» или «имя (со штампом).docx» — отдельный файл без подписи с плашками всех подписантов (безопасно при соподписании)."/>
         </WrapPanel>
 
         <!-- Доверенность (МЧД) -->
-        <WrapPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
+        <WrapPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8" IsEnabled="{Binding !IsBusy}">
             <TextBlock Text="Доверенность (МЧД):" VerticalAlignment="Center" Margin="0,0,8,4"/>
             <Button Margin="0,0,8,4" Padding="8,3"
                     Content="Добавить доверенность…"
                     Command="{Binding AddPoaCommand}"
-                    ToolTip.Tip="Как в Контуре: выберите файл МЧД (XML) и подпись руководителя (.sig). Программа проверит подпись, срок действия и соответствие представителя вашему сертификату. Файлы МЧД будут скопированы рядом с подписанным документом, номер МЧД попадёт в штамп на PDF."/>
+                    ToolTip.Tip="Как в Контуре: выберите файл МЧД (XML) и подпись руководителя (.sig). Программа проверит подпись, срок действия и соответствие представителя вашему сертификату. Файлы МЧД будут скопированы рядом с подписанным документом, номер МЧД попадёт в штамп на документе."/>
             <TextBlock Margin="0,0,8,4" VerticalAlignment="Center"
                        Text="{Binding PoaDisplay}"
                        Foreground="{DynamicResource SystemAccentColor}"
@@ -122,13 +123,14 @@
                                   Command="{Binding RemoveSignerCommand}"/>
                         <MenuItem Header="Собрать контейнер… (документ + подписи в один .sig)"
                                   Command="{Binding BuildContainerCommand}"/>
-                        <MenuItem Header="Штамп на PDF… (копия со штампом без подписания)"
+                        <MenuItem Header="Штамп на PDF/Word… (копия со штампом без подписания)"
                                   Command="{Binding StampOnlyCommand}"/>
                     </MenuFlyout>
                 </Button.Flyout>
             </Button>
             <CheckBox Grid.Column="2" Margin="12,0,0,0" VerticalAlignment="Center"
                       IsChecked="{Binding ApplyCoSignToAll}"
+                      IsEnabled="{Binding !IsBusy}"
                       Content="Применить ко всем"
                       ToolTip.Tip="Все файлы берут режим первого в списке: «Создать новую» или «Добавить к существующей». Если подходящей подписи нет, строка остаётся на «Создать новую» и пишет об этом. Галочка запоминается."/>
             <Button Grid.Column="4" Content="Очистить список" Command="{Binding ClearCommand}"
@@ -180,7 +182,7 @@
                                                       Command="{Binding Owner.AttachSignaturesCommand}"
                                                       CommandParameter="{Binding}"/>
                                             <Separator/>
-                                            <MenuItem Header="Штамп на PDF (копия без подписи)…"
+                                            <MenuItem Header="Штамп на документ (копия без подписи)…"
                                                       Command="{Binding Owner.StampItemCommand}"
                                                       CommandParameter="{Binding}"/>
                                             <MenuItem Header="Извлечь из контейнера (.sig рядом)"
@@ -299,8 +301,10 @@
                        Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
             <Button Grid.Column="2" Name="SettingsButton" Padding="8,2" Margin="0,0,8,0"
                     Content="Настройки…"
+                    IsEnabled="{Binding !IsBusy}"
                     ToolTip.Tip="Резервная копия .sig, штамп времени (CAdES-T) и адрес службы TSA"/>
             <Button Grid.Column="3" Name="AboutButton" Padding="8,2" Content="О программе"
+                    IsEnabled="{Binding !IsBusy}"
                     ToolTip.Tip="Версия, автор, история версий и обновления"/>
         </Grid>
     </Grid>

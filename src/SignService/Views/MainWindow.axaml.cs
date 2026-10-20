@@ -113,7 +113,9 @@ public partial class MainWindow : Window
 
             if (item is IStorageFolder && Directory.Exists(path))
             {
-                foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+                // Недоступная подпапка (нет прав, системная) пропускается, а не обрывает всё перетаскивание.
+                var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
+                foreach (var file in Directory.EnumerateFiles(path, "*", options))
                     yield return file;
             }
             else if (File.Exists(path))
@@ -184,11 +186,16 @@ public partial class MainWindow : Window
     {
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title = "PDF-документы для штампа (без подписания)",
+            Title = "Документы PDF и Word для штампа (без подписания)",
             AllowMultiple = true,
             FileTypeFilter = new[]
             {
+                new FilePickerFileType("Документы PDF и Word (*.pdf, *.docx, *.docm)")
+                {
+                    Patterns = new[] { "*.pdf", "*.docx", "*.docm" },
+                },
                 new FilePickerFileType("Документы PDF (*.pdf)") { Patterns = new[] { "*.pdf" } },
+                new FilePickerFileType("Документы Word (*.docx, *.docm)") { Patterns = new[] { "*.docx", "*.docm" } },
             },
         });
 
