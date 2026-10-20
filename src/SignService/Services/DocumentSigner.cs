@@ -101,7 +101,9 @@ public class DocumentSigner
     /// Результат подписания файла: подписанный документ (в режиме «подписывать
     /// копию со штампом» — путь к ней), путь к .sig, число подписантов,
     /// исключённые при объединении подписи, не проверенные подписи и путь
-    /// к штампованной копии БЕЗ подписи (режим «копия отдельно»).
+    /// к штампованной копии БЕЗ подписи (режим «копия отдельно»). StampWarning —
+    /// подпись сохранена, но с копией со штампом что-то не так (не создана или
+    /// не все подписанты попали на плашки).
     /// </summary>
     public readonly record struct SignFileResult(
         string SignedDocumentPath,
@@ -112,7 +114,8 @@ public class DocumentSigner
         string? StampedCopyPath = null,
         int PreviousSignerCount = 0,
         bool AppendedToExisting = false,
-        string? BackupPath = null);
+        string? BackupPath = null,
+        string? StampWarning = null);
 
     private readonly TimestampClient _timestampClient = new();
 
@@ -178,7 +181,8 @@ public class DocumentSigner
             try
             {
                 targetPath = DocumentStamper.CreateStampedCopy(
-                    filePath, new[] { certificate }, stampOptions, DateTime.Now);
+                    filePath, new[] { new PdfStamper.StampSigner(certificate, DateTime.Now, stampOptions.PoaNumber) },
+                    stampOptions);
             }
             catch (Exception e)
             {
@@ -298,33 +302,39 @@ public class DocumentSigner
         if (poaPackage is not null) PowerOfAttorneyService.CopyPackage(poaPackage, targetPath);
         await AtomicFile.WriteAsync(signaturePath, output, overwrite: true, cancellationToken);
 
-        // Режим «копия отдельно»: штампованная копия БЕЗ подписи, со всеми
-        // подписантами итогового .sig — пересоздаётся после каждого подписания.
+        // Режим «копия отдельно»: штампованная копия БЕЗ подписи с подписантами
+        // итогового .sig — пересоздаётся после каждого подписания. Плашки — только
+        // по подписям, которые проверяются по документу; дата у каждого своя,
+        // номер МЧД — у того, кто подписывает сейчас. Подпись к этому моменту уже
+        // записана, поэтому сбой копии — предупреждение, а не ошибка подписания.
         string? stampedCopyPath = null;
+        string? stampWarning = null;
         if (stampAsCopy)
         {
             try
             {
-                var signerCerts = CmsMerger.GetSignerCertificates(
-                    await File.ReadAllBytesAsync(signaturePath, cancellationToken));
-                var stampCerts = signerCerts.Count > 0
-                    ? signerCerts
-                    : new List<X509Certificate2> { certificate };
-                stampedCopyPath = DocumentStamper.CreateStampedCopy(
-                    filePath, stampCerts, stampOptions, DateTime.Now);
-                foreach (var c in signerCerts)
-                    c.Dispose();
+                using var found = DocumentStamper.SignersFromSignatures(new[] { output }, data);
+                var signers = found.Signers
+                    .Select(s => DocumentStamper.SameCertificate(s.Certificate, certificate)
+                        ? s with { PoaNumber = stampOptions.PoaNumber }
+                        : s)
+                    .ToList();
+                if (!signers.Any(s => DocumentStamper.SameCertificate(s.Certificate, certificate)))
+                    signers.Add(new PdfStamper.StampSigner(certificate, DateTime.Now, stampOptions.PoaNumber));
+                stampedCopyPath = DocumentStamper.CreateStampedCopy(filePath, signers, stampOptions);
+                if (found.Skipped.Count > 0)
+                    stampWarning = "в копии со штампом нет плашек для подписей, которые не удалось проверить по документу: "
+                        + string.Join("; ", found.Skipped);
             }
             catch (Exception e)
             {
-                throw new InvalidOperationException(
-                    $"Документ подписан, но не удалось создать копию со штампом ({e.Message}).", e);
+                stampWarning = $"подпись сохранена, но копию со штампом создать не удалось: {e.Message}";
             }
         }
 
         return new SignFileResult(
             targetPath, signaturePath, signerCount, excluded, unverified, stampedCopyPath,
-            previousSignerCount, appended, backupPath);
+            previousSignerCount, appended, backupPath, stampWarning);
     }
 
     /// <summary>

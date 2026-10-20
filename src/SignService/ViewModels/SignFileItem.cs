@@ -123,8 +123,8 @@ public partial class SignFileItem : ObservableObject
     private bool _isDiscovering;
 
     /// <summary>
-    /// Подписывается копия со штампом (режим «подписывать копию»): найденные подписи
-    /// оригинала к ней не относятся — объединяются только приложенные.
+    /// Подписывается копия со штампом (режим «подписывать копию»): это другой файл,
+    /// поэтому ни найденные, ни приложенные подписи оригинала к ней не относятся.
     /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanChooseCoSign))]
@@ -268,6 +268,8 @@ public partial class SignFileItem : ObservableObject
     public IReadOnlyList<string> PlannedMergeInputs()
     {
         var list = new List<string>();
+        if (SignsStampedCopy)
+            return list;
         if (!SignsStampedCopy && SelectedCoSignOption is { CreateNew: false, SignaturePath: { } selected })
         {
             list.Add(selected);
@@ -400,7 +402,10 @@ public partial class SignFileItem : ObservableObject
         var outside = _extraSignatures.Count(extra => !planned.Any(path => SignatureDiscovery.SamePath(path, extra)));
         var extras = outside > 0 ? $"; приложенные подписи ({outside}) будут объединены с вашей" : "";
         if (SignsStampedCopy)
-            return "будет подписана копия со штампом — для неё создаётся новый файл подписи" + extras;
+            return "будет подписана копия со штампом — для неё создаётся новый файл подписи"
+                + (_extraSignatures.Count > 0
+                    ? $"; приложенные подписи ({_extraSignatures.Count}) относятся к оригиналу и в подпись копии не войдут"
+                    : "");
         if (SelectedCoSignOption is { CreateNew: false, SignaturePath: { } path })
         {
             var others = _discovered.Where(match => !SignatureDiscovery.SamePath(match.Path, path)).ToList();

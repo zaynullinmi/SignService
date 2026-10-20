@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography.X509Certificates;
 
 namespace SignService.Services;
@@ -40,16 +41,97 @@ public static class DocumentStamper
     /// </summary>
     public static string CreateStampedCopy(
         string filePath,
-        IReadOnlyList<X509Certificate2> certificates,
-        PdfStamper.StampOptions options,
-        DateTime signTime)
+        IReadOnlyList<PdfStamper.StampSigner> signers,
+        PdfStamper.StampOptions options)
     {
         ThrowIfCopySigned(filePath);
         if (WordStamper.IsWord(filePath))
-            return WordStamper.CreateStampedCopy(filePath, certificates, options, signTime);
+            return WordStamper.CreateStampedCopy(filePath, signers, options);
         if (PdfStamper.IsPdf(filePath))
-            return PdfStamper.CreateStampedCopy(filePath, certificates, options, signTime);
+            return PdfStamper.CreateStampedCopy(filePath, signers, options);
         throw new InvalidOperationException(UnsupportedMessage(filePath));
+    }
+
+    /// <summary>Все сертификаты — с одной датой и МЧД из параметров.</summary>
+    public static string CreateStampedCopy(
+        string filePath,
+        IReadOnlyList<X509Certificate2> certificates,
+        PdfStamper.StampOptions options,
+        DateTime signTime)
+        => CreateStampedCopy(filePath, PdfStamper.ToSigners(certificates, options, signTime), options);
+
+    /// <summary>
+    /// Подписанты для плашек из файлов подписи документа. Плашка «Документ подписан»
+    /// ставится только по подписи, которая криптографически проверяется по этому
+    /// документу; остальные (другая версия документа, не удалось проверить) — в Skipped.
+    /// Время — из атрибута signingTime подписи. Сертификаты освобождаются в Dispose.
+    /// </summary>
+    public static StampSigners SignersFromSignatures(IEnumerable<byte[]> signatures, byte[] document)
+    {
+        var signers = new List<PdfStamper.StampSigner>();
+        var valid = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var skipped = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var signature in signatures)
+        {
+            var report = SignatureVerifier.Verify(signature, document, VerificationOptions.CryptographyOnly);
+            foreach (var signer in report.Signers)
+            {
+                if (signer.CryptographicallyValid && signer.Certificate is { } raw)
+                {
+                    if (valid.Add(signer.Thumbprint))
+                        signers.Add(new PdfStamper.StampSigner(
+                            new X509Certificate2(raw), signer.SigningTime?.ToLocalTime().DateTime));
+                }
+                else
+                {
+                    var key = signer.Thumbprint.Length > 0 ? signer.Thumbprint : $"{skipped.Count}:{signer.Name}";
+                    skipped.TryAdd(key, DisplayName(signer));
+                }
+            }
+        }
+
+        // Подпись, проверенная в одном файле, не считается пропущенной из-за другого.
+        return new StampSigners(signers,
+            skipped.Where(pair => !valid.Contains(pair.Key)).Select(pair => pair.Value).Distinct().ToList());
+    }
+
+    private static string DisplayName(SignerVerification signer)
+    {
+        if (signer.Certificate is not { } raw)
+            return signer.Name;
+        try
+        {
+            using var certificate = new X509Certificate2(raw);
+            return CertificateProvider.GetSubjectName(certificate);
+        }
+        catch (System.Security.Cryptography.CryptographicException)
+        {
+            return signer.Name;
+        }
+    }
+
+    /// <summary>Тот же владелец ключа (сравнение по отпечатку сертификата).</summary>
+    public static bool SameCertificate(X509Certificate2 left, X509Certificate2 right) =>
+        string.Equals(left.Thumbprint, right.Thumbprint, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Подписанты для плашек и имена тех, чьи подписи к документу не подошли.</summary>
+    public sealed class StampSigners : IDisposable
+    {
+        public StampSigners(IReadOnlyList<PdfStamper.StampSigner> signers, IReadOnlyList<string> skipped)
+        {
+            Signers = signers;
+            Skipped = skipped;
+        }
+
+        public IReadOnlyList<PdfStamper.StampSigner> Signers { get; }
+
+        public IReadOnlyList<string> Skipped { get; }
+
+        public void Dispose()
+        {
+            foreach (var signer in Signers)
+                signer.Certificate.Dispose();
+        }
     }
 
     /// <summary>

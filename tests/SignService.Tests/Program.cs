@@ -432,12 +432,18 @@ var fakePdf = Path.Combine(pdfDir, "битый.pdf");
 await File.WriteAllBytesAsync(fakePdf, new byte[] { 1, 2, 3 });
 try
 {
-    await signer.SignFileAsync(fakePdf, cert, new DocumentSigner.SignOptions { Stamp = true });
-    throw new Exception("broken PDF must fail");
+    await signer.SignFileAsync(fakePdf, cert, new DocumentSigner.SignOptions { Stamp = true, StampSignCopy = true });
+    throw new Exception("broken PDF must fail in sign-copy mode");
 }
 catch (InvalidOperationException e) when (e.Message.Contains("штамп"))
 {
 }
+if (File.Exists(fakePdf + ".sig")) throw new Exception("sign-copy mode: nothing is signed when the stamp fails");
+// копия отдельно: подпись уже записана — сбой копии не превращает подписание в ошибку
+var brokenCopy = await signer.SignFileAsync(fakePdf, cert, new DocumentSigner.SignOptions { Stamp = true });
+if (!File.Exists(brokenCopy.SignaturePath) || brokenCopy.StampedCopyPath is not null
+    || brokenCopy.StampWarning?.Contains("не удалось") != true)
+    throw new Exception("separate mode: a failed stamped copy must be a warning: " + brokenCopy.StampWarning);
 Console.WriteLine("PDF stamp variants (no date/logo, non-PDF, broken PDF): OK");
 
 // ===== 12. Объединение подписей без подписания =====

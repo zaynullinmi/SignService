@@ -986,7 +986,8 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    private bool CanStampOnly() => !IsBusy && SelectedCertificate is not null;
+    // Сертификат не обязателен: плашки ставятся и по уже имеющимся подписям документа.
+    private bool CanStampOnly() => !IsBusy;
 
     [RelayCommand(CanExecute = nameof(CanStampOnly))]
     private void StampOnly() => StampOnlyRequested?.Invoke(this, EventArgs.Empty);
@@ -1014,17 +1015,19 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Ставит визуальный штамп на PDF или документ Word без подписания. Если рядом с документом
-    /// есть «имя.sig», плашки ставятся для ВСЕХ его подписантов; иначе —
-    /// по данным выбранного сертификата.
+    /// Ставит визуальный штамп на PDF или документ Word без подписания. Плашки — по
+    /// подписям документа, которые проверяются по нему: указанной (ПКМ по файлу),
+    /// «имя.sig» или найденным в папке по содержимому. Если подписей нет — по
+    /// выбранному сертификату (документ ещё не подписан).
     /// </summary>
     public async Task StampWithoutSigningAsync(IReadOnlyList<string> paths, PdfStamper.StampOptions options,
         string? signatureHint = null)
     {
-        if (paths.Count == 0 || SelectedCertificate is not { } item)
+        if (paths.Count == 0)
             return;
 
-        options = options with { PoaNumber = options.PoaNumber ?? Poa?.Number };
+        var current = SelectedCertificate?.Certificate;
+        var poaNumber = options.PoaNumber ?? Poa?.Number;
         IsBusy = true;
         try
         {
@@ -1040,28 +1043,29 @@ public partial class MainWindowViewModel : ObservableObject
                         continue;
                     }
 
-                    var stamped = await Task.Run(() =>
+                    var (stamped, skipped) = await Task.Run(() =>
                     {
-                        var sigPath = signatureHint ?? path + ".sig";
-                        var certs = System.IO.File.Exists(sigPath)
-                            ? CmsMerger.GetSignerCertificates(System.IO.File.ReadAllBytes(sigPath))
-                            : Array.Empty<System.Security.Cryptography.X509Certificates.X509Certificate2>();
-                        try
-                        {
-                            return DocumentStamper.CreateStampedCopy(
-                                path,
-                                certs.Count > 0 ? certs : new[] { item.Certificate },
-                                options,
-                                DateTime.Now);
-                        }
-                        finally
-                        {
-                            foreach (var c in certs)
-                                c.Dispose();
-                        }
+                        var sources = StampSignatureSources(path, signatureHint);
+                        var document = System.IO.File.ReadAllBytes(path);
+                        using var found = DocumentStamper.SignersFromSignatures(
+                            sources.Select(System.IO.File.ReadAllBytes), document);
+                        var signers = found.Signers
+                            .Select(s => current is not null && DocumentStamper.SameCertificate(s.Certificate, current)
+                                ? s with { PoaNumber = poaNumber }
+                                : s)
+                            .ToList();
+                        if (signers.Count == 0 && sources.Count == 0 && current is not null)
+                            signers.Add(new PdfStamper.StampSigner(current, DateTime.Now, poaNumber));
+                        if (signers.Count == 0)
+                            throw new InvalidOperationException(sources.Count == 0
+                                ? "у документа нет подписи, а сертификат не выбран"
+                                : "подписи («" + string.Join("», «", sources.Select(System.IO.Path.GetFileName))
+                                    + "») не соответствуют этому документу — штамп «Документ подписан» не поставлен");
+                        return (DocumentStamper.CreateStampedCopy(path, signers, options), found.Skipped);
                     });
                     Log($"Штамп без подписания: «{name}» → «{System.IO.Path.GetFileName(stamped)}»"
-                        + (note is null ? "" : $" ({note})"));
+                        + (note is null ? "" : $" ({note})")
+                        + (skipped.Count == 0 ? "" : "; без плашки (подпись не соответствует документу): " + string.Join("; ", skipped)));
                 }
                 catch (Exception ex)
                 {
@@ -1073,6 +1077,20 @@ public partial class MainWindowViewModel : ObservableObject
         {
             IsBusy = false;
         }
+    }
+
+    // Указанная подпись; иначе «имя.sig»; иначе подписи из папки, относящиеся к документу по содержимому.
+    private static IReadOnlyList<string> StampSignatureSources(string path, string? hint)
+    {
+        if (hint is not null)
+            return System.IO.File.Exists(hint) ? new[] { hint } : Array.Empty<string>();
+        if (System.IO.File.Exists(path + ".sig"))
+            return new[] { path + ".sig" };
+        return SignatureDiscovery.Discover(new[] { path }, Array.Empty<string>())
+            .SelectMany(d => d.FolderMatches)
+            .Where(match => match.MatchingSigners > 0)
+            .Select(match => match.Path)
+            .ToList();
     }
 
     /// <summary>ПКМ: подписанты и проверка ЭЦП для файла из списка (.sig рядом).</summary>
@@ -1524,8 +1542,9 @@ public partial class MainWindowViewModel : ObservableObject
                     var options = new DocumentSigner.SignOptions
                     {
                         Detached = IsDetached,
-                        // Копия со штампом объединяется только со своей прежней подписью, как раньше.
-                        MergeWithExisting = existing is not null || (file.SignsStampedCopy && MergeWithExisting),
+                        // Копия со штампом всегда получает новый файл подписи: подписанную
+                        // копию DocumentSigner не перезаписывает.
+                        MergeWithExisting = existing is not null,
                         ExistingSignaturePath = existing,
                         ExtraSignatures = extras,
                         Timestamp = UseTimestamp,
@@ -1556,6 +1575,8 @@ public partial class MainWindowViewModel : ObservableObject
                     file.Status = SignStatus.Signed;
                     signed++;
                     var stampNote = stampParameters is null ? null : DocumentStamper.Note(file.FilePath, stampParameters);
+                    if (result.StampWarning is { } stampWarning)
+                        file.Warning = file.Warning is null ? "Штамп: " + stampWarning : file.Warning + " Штамп: " + stampWarning;
                     Log($"  [OK] {file.FileName} → {file.StatusDisplay}"
                         + (result.BackupPath is null
                             ? ""
@@ -1563,7 +1584,8 @@ public partial class MainWindowViewModel : ObservableObject
                         + (result.StampedCopyPath is null
                             ? ""
                             : $"; копия со штампом (без подписи): {System.IO.Path.GetFileName(result.StampedCopyPath)}")
-                        + (stampNote is null ? "" : $"; {stampNote}"));
+                        + (stampNote is null ? "" : $"; {stampNote}")
+                        + (result.StampWarning is null ? "" : $"; ВНИМАНИЕ: {result.StampWarning}"));
                 }
                 catch (Exception ex)
                 {

@@ -57,6 +57,17 @@ public static class PdfStamper
         public string? CustomPages { get; init; }
     }
 
+    /// <summary>
+    /// Подписант на плашке: сертификат, время подписания (null — строки с датой нет)
+    /// и номер МЧД, по которой подписывал именно он.
+    /// </summary>
+    public sealed record StampSigner(X509Certificate2 Certificate, DateTime? SignTime, string? PoaNumber = null);
+
+    /// <summary>Все сертификаты с одной датой и МЧД из параметров (для вызовов без сведений о подписях).</summary>
+    internal static IReadOnlyList<StampSigner> ToSigners(
+        IReadOnlyList<X509Certificate2> certificates, StampOptions options, DateTime signTime) =>
+        certificates.Select(c => new StampSigner(c, signTime, options.PoaNumber)).ToList();
+
     /// <summary>Совместимая обёртка: один подписант, штамп на последней странице.</summary>
     public static string CreateStampedCopy(
         string pdfPath,
@@ -89,9 +100,13 @@ public static class PdfStamper
         IReadOnlyList<X509Certificate2> certificates,
         StampOptions options,
         DateTime signTime)
+        => CreateStampedCopy(pdfPath, ToSigners(certificates, options, signTime), options);
+
+    /// <summary>Копия со штампом: по плашке на подписанта, со своими датой и МЧД.</summary>
+    public static string CreateStampedCopy(string pdfPath, IReadOnlyList<StampSigner> signers, StampOptions options)
     {
-        if (certificates.Count == 0)
-            throw new ArgumentException("Нет сертификатов для штампа.", nameof(certificates));
+        if (signers.Count == 0)
+            throw new ArgumentException("Нет подписантов для штампа.", nameof(signers));
 
         var outputPath = StampedCopyPath(pdfPath);
 
@@ -100,7 +115,7 @@ public static class PdfStamper
         {
             var page = document.Pages[pageIndex];
             using var gfx = XGraphics.FromPdfPage(page);
-            DrawStampsOnPage(gfx, page, certificates, options, signTime);
+            DrawStampsOnPage(gfx, page, signers, options);
         }
 
         // Сначала в память, затем атомарно: сбой записи не оставит обрезанный PDF.
@@ -145,8 +160,7 @@ public static class PdfStamper
     // Раскладка: плашки подписантов колонками из правого нижнего угла вверх,
     // при нехватке высоты — следующая колонка левее.
     private static void DrawStampsOnPage(
-        XGraphics gfx, PdfPage page, IReadOnlyList<X509Certificate2> certificates,
-        StampOptions options, DateTime signTime)
+        XGraphics gfx, PdfPage page, IReadOnlyList<StampSigner> signers, StampOptions options)
     {
         const double width = 250;
         const double margin = 20;
@@ -155,9 +169,9 @@ public static class PdfStamper
         var x = page.Width.Point - width - margin;
         var y = page.Height.Point - margin;
 
-        foreach (var certificate in certificates)
+        foreach (var signer in signers)
         {
-            var height = ComputeStampHeight(certificate, options);
+            var height = ComputeStampHeight(signer, options);
             if (y - height < margin && y < page.Height.Point - margin)
             {
                 // колонка заполнена — следующая левее
@@ -166,7 +180,7 @@ public static class PdfStamper
             }
 
             y -= height;
-            DrawSingleStamp(gfx, new XRect(x, y, width, height), certificate, options, signTime);
+            DrawSingleStamp(gfx, new XRect(x, y, width, height), signer, options);
             y -= gap;
         }
     }
@@ -176,17 +190,20 @@ public static class PdfStamper
 
     internal static string DateLine(DateTime signTime) => $"Дата подписания: {signTime:dd.MM.yyyy HH:mm}";
 
-    /// <summary>Строки плашки (общие для PDF и Word): сертификат, владелец, срок, МЧД.</summary>
-    internal static List<string> StampLines(X509Certificate2 certificate, StampOptions options)
+    /// <summary>Строки плашки (общие для PDF и Word): сертификат, владелец, срок, МЧД, дата.</summary>
+    internal static List<string> StampLines(StampSigner signer, StampOptions options)
     {
+        var certificate = signer.Certificate;
         var lines = new List<string>
         {
             $"Сертификат: {certificate.SerialNumber}",
             $"Владелец: {CertificateProvider.GetSubjectName(certificate)}",
             $"Действителен: с {certificate.NotBefore:dd.MM.yyyy} по {certificate.NotAfter:dd.MM.yyyy}",
         };
-        if (!string.IsNullOrWhiteSpace(options.PoaNumber))
-            lines.Add($"Действует на основании МЧД № {options.PoaNumber}");
+        if (!string.IsNullOrWhiteSpace(signer.PoaNumber))
+            lines.Add($"Действует на основании МЧД № {signer.PoaNumber}");
+        if (options.WithDate && signer.SignTime is { } signTime)
+            lines.Add(DateLine(signTime));
         return lines;
     }
 
@@ -194,15 +211,15 @@ public static class PdfStamper
     private const double StampLineHeight = 10.5;
     private const double StampTitleHeight = 24;
 
-    private static double ComputeStampHeight(X509Certificate2 certificate, StampOptions options)
+    private static double ComputeStampHeight(StampSigner signer, StampOptions options)
     {
         var logoSize = options.LogoPath is not null ? 34.0 : 0.0;
-        var bodyLines = StampLines(certificate, options).Count + (options.WithDate ? 1 : 0);
+        var bodyLines = StampLines(signer, options).Count;
         return StampPad * 2 + Math.Max(StampTitleHeight, logoSize) + 4 + bodyLines * StampLineHeight;
     }
 
     private static void DrawSingleStamp(
-        XGraphics gfx, XRect rect, X509Certificate2 certificate, StampOptions options, DateTime signTime)
+        XGraphics gfx, XRect rect, StampSigner signer, StampOptions options)
     {
         var width = rect.Width;
         var blue = XColor.FromArgb(0x1B, 0x4F, 0x9C);
@@ -210,8 +227,7 @@ public static class PdfStamper
         var titleFont = new XFont("stamp", 8, XFontStyleEx.Bold);
         var textFont = new XFont("stamp", 7, XFontStyleEx.Regular);
 
-        var lines = StampLines(certificate, options);
-        var dateLine = options.WithDate ? DateLine(signTime) : null;
+        var lines = StampLines(signer, options);
         var logoPath = options.LogoPath;
 
         const double pad = StampPad;
@@ -252,7 +268,7 @@ public static class PdfStamper
         // Текст
         var textBrush = new XSolidBrush(blue);
         var textY = topY + Math.Max(titleHeight, logoSize) + 4;
-        foreach (var line in dateLine is null ? lines : lines.Append(dateLine))
+        foreach (var line in lines)
         {
             gfx.DrawString(Truncate(gfx, line, textFont, width - pad * 2), textFont, textBrush,
                 new XRect(x + pad, textY, width - pad * 2, lineHeight), XStringFormats.TopLeft);

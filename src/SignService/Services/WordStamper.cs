@@ -64,9 +64,14 @@ public static class WordStamper
         IReadOnlyList<X509Certificate2> certificates,
         PdfStamper.StampOptions options,
         DateTime signTime)
+        => CreateStampedCopy(docPath, PdfStamper.ToSigners(certificates, options, signTime), options);
+
+    /// <summary>Копия со штампом: по плашке на подписанта, со своими датой и МЧД.</summary>
+    public static string CreateStampedCopy(
+        string docPath, IReadOnlyList<PdfStamper.StampSigner> signers, PdfStamper.StampOptions options)
     {
-        if (certificates.Count == 0)
-            throw new ArgumentException("Нет сертификатов для штампа.", nameof(certificates));
+        if (signers.Count == 0)
+            throw new ArgumentException("Нет подписантов для штампа.", nameof(signers));
 
         var outputPath = StampedCopyPath(docPath);
         using var buffer = new MemoryStream();
@@ -75,7 +80,7 @@ public static class WordStamper
 
         using (var document = WordprocessingDocument.Open(buffer, true))
         {
-            var stamp = new Stamp(document, certificates, options, signTime);
+            var stamp = new Stamp(document, signers, options);
             switch (options.Pages)
             {
                 case PdfStamper.StampPages.First:
@@ -101,23 +106,21 @@ public static class WordStamper
     {
         private readonly MainDocumentPart _main;
         private readonly Body _body;
-        private readonly IReadOnlyList<X509Certificate2> _certificates;
+        private readonly IReadOnlyList<PdfStamper.StampSigner> _signers;
         private readonly PdfStamper.StampOptions _options;
-        private readonly DateTime _signTime;
         private readonly Logo? _logo;
         private readonly Dictionary<OpenXmlPart, string> _logoIds = new();
         private uint _nextDrawingId;
 
-        public Stamp(WordprocessingDocument document, IReadOnlyList<X509Certificate2> certificates,
-            PdfStamper.StampOptions options, DateTime signTime)
+        public Stamp(WordprocessingDocument document, IReadOnlyList<PdfStamper.StampSigner> signers,
+            PdfStamper.StampOptions options)
         {
             _main = document.MainDocumentPart
                 ?? throw new InvalidOperationException("В файле нет основной части документа Word.");
             _body = _main.Document?.Body
                 ?? throw new InvalidOperationException("В документе Word нет текста.");
-            _certificates = certificates;
+            _signers = signers;
             _options = options;
-            _signTime = signTime;
             _logo = LoadLogo(options.LogoPath);
             _nextDrawingId = MaxDrawingId() + 1;
         }
@@ -389,7 +392,7 @@ public static class WordStamper
         /// </summary>
         private IEnumerable<OpenXmlElement> Block(OpenXmlPart host, int available, int spaceBefore)
         {
-            var columns = Math.Clamp((available + StampGap) / (MinStampWidth + StampGap), 1, _certificates.Count);
+            var columns = Math.Clamp((available + StampGap) / (MinStampWidth + StampGap), 1, _signers.Count);
             var stampWidth = Math.Min(MaxStampWidth, (available - StampGap * (columns - 1)) / columns);
             var totalWidth = stampWidth * columns + StampGap * (columns - 1);
 
@@ -416,9 +419,9 @@ public static class WordStamper
                         new TableCellRightMargin { Width = 0, Type = TableWidthValues.Dxa })),
                 grid);
 
-            for (var start = 0; start < _certificates.Count; start += columns)
+            for (var start = 0; start < _signers.Count; start += columns)
             {
-                var signers = _certificates.Skip(start).Take(columns).ToList();
+                var signers = _signers.Skip(start).Take(columns).ToList();
                 var empty = columns - signers.Count;
                 var row = new TableRow(new TableRowProperties(new CantSplit()));
                 for (var c = 0; c < columns; c++)
@@ -437,7 +440,7 @@ public static class WordStamper
             return new OpenXmlElement[] { Spacer(spaceBefore, 20, keepNext: true), layout, Spacer(0, 20) };
         }
 
-        private Table StampTable(X509Certificate2 certificate, int width, OpenXmlPart host)
+        private Table StampTable(PdfStamper.StampSigner signer, int width, OpenXmlPart host)
         {
             var logoId = LogoRelationship(host);
             var logoColumn = LogoTwips + CellPadding * 2;
@@ -475,9 +478,7 @@ public static class WordStamper
                 heading.Append(Cell(width, title.ToArray()));
             }
 
-            var lines = PdfStamper.StampLines(certificate, _options);
-            if (_options.WithDate)
-                lines.Add(PdfStamper.DateLine(_signTime));
+            var lines = PdfStamper.StampLines(signer, _options);
             var body = lines.Select((line, i) => (OpenXmlElement)Text(line, bold: false, TextSize, i == 0 ? 60 : 0))
                 .ToArray();
             var details = new TableRow(new TableRowProperties(new CantSplit()),

@@ -35,6 +35,8 @@ internal static class WordStampTests
         CheckFormats(root, certA);
         await CheckSigning(root, signer, certA, certB, logo);
         await CheckSignCopyInViewModel(root, certA);
+        await CheckPlatesPerSigner(root, signer, certA, certB);
+        await CheckStampToolUsesValidSignaturesOnly(root, signer, certA, certB);
         await CheckBrokenDocument(root, signer, certA);
         Console.WriteLine("word stamp: end of text, first page, all footers, signing, schema validation: OK");
     }
@@ -378,6 +380,86 @@ internal static class WordStampTests
         await vm.SignAllCommand.ExecuteAsync(null);
         Assert(item.Status == SignStatus.Signed && item.SignaturePath == Path.Combine(dir, "письмо (со штампом).docx.sig"),
             "stamped Word copy signed from the main window: " + item.StatusDisplay + " " + item.Message);
+    }
+
+    // У каждой плашки — своя дата подписания (из подписи), номер МЧД — только у того,
+    // кто подписывал по ней сейчас.
+    private static async Task CheckPlatesPerSigner(string root, DocumentSigner signer,
+        X509Certificate2 certA, X509Certificate2 certB)
+    {
+        var dir = Path.Combine(root, "plates");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "счёт.docx");
+        CreateDocument(path, (main, body) => body.Append(Para("Счёт"), Section(main)));
+        var data = await File.ReadAllBytesAsync(path);
+        // подпись А «вчера»: время подписания берётся из подписи, а не из момента пересоздания копии
+        var yesterday = DateTime.Now.AddDays(-1);
+        var signedYesterday = new SignedCms(new ContentInfo(data), detached: true);
+        var cmsSigner = new CmsSigner(certA);
+        cmsSigner.SignedAttributes.Add(new Pkcs9SigningTime(yesterday));
+        signedYesterday.ComputeSignature(cmsSigner);
+        await File.WriteAllBytesAsync(path + ".sig", signedYesterday.Encode());
+
+        var result = await signer.SignFileAsync(path, certB, new DocumentSigner.SignOptions
+        {
+            Detached = true, MergeWithExisting = true, Stamp = true,
+            StampParameters = new PdfStamper.StampOptions { PoaNumber = "МЧД-Б" },
+        });
+        Assert(result.SignerCount == 2 && result.StampWarning is null, "co-signed: " + result.StampWarning);
+        using var doc = WordprocessingDocument.Open(result.StampedCopyPath!, false);
+        var plates = doc.MainDocumentPart!.Document!.Body!.Descendants<Table>()
+            .Where(t => t.Descendants<Table>().Count() == 0 && t.InnerText.Contains(Title))
+            .Select(t => t.InnerText)
+            .ToList();
+        var plateA = plates.Single(t => t.Contains("Иванов"));
+        var plateB = plates.Single(t => t.Contains("Петрова"));
+        Assert(plateA.Contains($"Дата подписания: {yesterday:dd.MM.yyyy HH:mm}") && !plateA.Contains("МЧД"),
+            "the earlier signer keeps their own date and no one else's МЧД: " + plateA);
+        Assert(plateB.Contains("МЧД № МЧД-Б") && plateB.Contains($"Дата подписания: {DateTime.Now:dd.MM.yyyy}"),
+            "the current signer's plate carries their МЧД: " + plateB);
+    }
+
+    // «Штамп» без подписания: плашки только по подписям, которые проверяются по
+    // документу; подпись под другой версией — отказ; подпись с другим именем
+    // находится по содержимому; сертификат для этого не нужен.
+    private static async Task CheckStampToolUsesValidSignaturesOnly(string root, DocumentSigner signer,
+        X509Certificate2 certA, X509Certificate2 certB)
+    {
+        var dir = Path.Combine(root, "stamp-tool");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "приказ.docx");
+        CreateDocument(path, (main, body) => body.Append(Para("Приказ № 1"), Section(main)));
+        var stale = signer.Sign(System.Text.Encoding.UTF8.GetBytes("прежняя редакция приказа"), certB);
+        var settings = new AppSettings(Path.Combine(dir, "settings")) { CheckUpdatesOnStart = false };
+        var vm = new MainWindowViewModel(new CertificateProvider(), new DocumentSigner(), settings,
+            new CertificateVault(Path.Combine(dir, "vault")));
+        Assert(vm.StampOnlyCommand.CanExecute(null), "the stamp tool does not need a certificate");
+
+        await File.WriteAllBytesAsync(path + ".sig", stale);
+        await vm.StampWithoutSigningAsync(new[] { path }, new PdfStamper.StampOptions());
+        Assert(!File.Exists(WordStamper.StampedCopyPath(path)) && vm.LogText.Contains("не соответствуют"),
+            "a signature of another version must not produce «ДОКУМЕНТ ПОДПИСАН»: " + vm.LogText);
+
+        var data = await File.ReadAllBytesAsync(path);
+        await File.WriteAllBytesAsync(path + ".sig", CmsMerger.Merge(new[] { signer.Sign(data, certA), stale }));
+        await vm.StampWithoutSigningAsync(new[] { path }, new PdfStamper.StampOptions());
+        using (var doc = WordprocessingDocument.Open(WordStamper.StampedCopyPath(path), false))
+        {
+            var text = doc.MainDocumentPart!.Document!.Body!.InnerText;
+            Assert(Count(doc.MainDocumentPart.Document.Body!, Title) == 1 && text.Contains("Иванов") && !text.Contains("Петрова"),
+                "only the signer whose signature matches gets a plate");
+        }
+
+        Assert(vm.LogText.Contains("без плашки") && vm.LogText.Contains("Петрова"), "the skipped signer is reported: " + vm.LogText);
+
+        // подпись под другим именем в той же папке находится по содержимому
+        File.Delete(path + ".sig");
+        File.Delete(WordStamper.StampedCopyPath(path));
+        await File.WriteAllBytesAsync(Path.Combine(dir, "подпись руководителя.sig"), signer.Sign(data, certB));
+        await vm.StampWithoutSigningAsync(new[] { path }, new PdfStamper.StampOptions());
+        using (var doc = WordprocessingDocument.Open(WordStamper.StampedCopyPath(path), false))
+            Assert(doc.MainDocumentPart!.Document!.Body!.InnerText.Contains("Петрова"),
+                "a signature found by content is used for the plates: " + vm.LogText);
     }
 
     private static async Task CheckBrokenDocument(string root, DocumentSigner signer, X509Certificate2 cert)
